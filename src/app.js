@@ -3,7 +3,7 @@
  * Luuxis License v1.0 (voir fichier LICENSE pour les détails en FR/EN)
  */
 
-const { app, ipcMain, nativeTheme } = require('electron');
+const { app, ipcMain, nativeTheme, dialog, BrowserWindow } = require('electron');
 const { Microsoft } = require('minecraft-java-core');
 const { autoUpdater } = require('electron-updater')
 
@@ -48,6 +48,8 @@ ipcMain.on('update-window-progress-load', () => UpdateWindow.getWindow().setProg
 
 ipcMain.handle('path-user-data', () => app.getPath('userData'))
 ipcMain.handle('appData', e => app.getPath('appData'))
+ipcMain.handle('path-downloads', () => app.getPath('downloads'))
+ipcMain.handle('save-dialog', (event, options) => dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), options))
 
 ipcMain.on('main-window-maximize', () => {
     if (MainWindow.getWindow().isMaximized()) {

@@ -1,23 +1,28 @@
 /**
  * Fenêtre d'édition d'une instance personnelle :
  *  - onglets Mods, Packs de textures et Shaders : liste avec activation, suppression, import
- *    (bouton ou glisser-déposer) et vérification de compatibilité avant ajout ;
- *  - onglet Paramètres : nom, couleur, version, loader, Fabric API, suppression.
+ *    (bouton, glisser-déposer ou navigation Modrinth), vérification de compatibilité avant ajout
+ *    et mises à jour depuis Modrinth ;
+ *  - onglet Paramètres : nom, couleur, version, loader, Fabric API, export en .mrpack, suppression.
  */
 
 import InstanceForm, { escapeHTML, initials, loaderLabel } from '../utils/instanceForm.js'
 import { confirmDialog, reasonsList } from '../utils/dialog.js'
+import ModpackExport from './modpackExport.js'
 import { listMods, setModEnabled, importMod, deleteMod, readModInfo, checkCompatibility, modsFolder } from '../utils/mods.js'
+import { identify, findUpdates, resolveDependencies, downloadVersion, tempFolder, contentLoaders, FABRIC_API_ID } from '../utils/modrinth.js'
 import { instanceFolder, validateName, updateLocalInstance, deleteLocalInstance } from '../utils/instances.js'
 import {
     PACK_FOLDERS, listPacks, importPack, deletePack, readResourcePack, readShaderPack, packCompatibility, gameResourceFormat,
-    formatRangeLabel, activeResourcePacks, setResourcePacks, shaderLoader, activeShaderPack, setActiveShaderPack, modrinthSearchUrl
+    formatRangeLabel, activeResourcePacks, setResourcePacks, shaderLoader, activeShaderPack, setActiveShaderPack
 } from '../utils/packs.js'
 
 const { shell } = require('electron')
 const fs = require('fs')
 const path = require('path')
 
+const ICON_UPDATE = '<svg viewBox="0 0 24 24"><path d="M11 20h2v-9.2l3.3 3.3 1.4-1.4L12 7 6.3 12.7l1.4 1.4 3.3-3.3zM4 4h16v2H4z"/></svg>'
+const ICON_CHECK = '<svg viewBox="0 0 24 24"><path d="M9.5 16.2 5.3 12l-1.4 1.4 5.6 5.6L20.1 8.4 18.7 7z"/></svg>'
 const ICON_TRASH = '<svg viewBox="0 0 24 24"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 11a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1z"/></svg>'
 const ICON_PUZZLE = '<svg viewBox="0 0 24 24"><path d="M10 3a2 2 0 0 1 2 2v1h4a1 1 0 0 1 1 1v4h1a2 2 0 1 1 0 4h-1v4a1 1 0 0 1-1 1h-4v-1a2 2 0 1 0-4 0v1H4a1 1 0 0 1-1-1v-4h1a2 2 0 1 0 0-4H3V7a1 1 0 0 1 1-1h4V5a2 2 0 0 1 2-2z"/></svg>'
 const ICON_IMAGE = '<svg viewBox="0 0 24 24"><path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v10.6l4-4 3 3 4-5 3 3.8V6zm4 1.5a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></svg>'
@@ -36,8 +41,14 @@ export default class InstanceEditor {
         this.instance = null
         this.mods = []
         this.packs = { resourcepacks: [], shaderpacks: [] }
+        /** Mises à jour Modrinth disponibles, par type puis par nom de fichier. */
+        this.updates = { mods: new Map(), resourcepacks: new Map(), shaderpacks: new Map() }
+        /** Fichiers reconnus sur Modrinth (affichés « à jour » s'ils n'ont pas de mise à jour). */
+        this.identified = { mods: new Set(), resourcepacks: new Set(), shaderpacks: new Set() }
+        this.updateTimers = {}
         this.formLoaded = false
         this.form = new InstanceForm(this.root.querySelector('.edit-general'), { onChange: () => this.updateSaveState() })
+        this.exporter = new ModpackExport(this)
         this.bind()
     }
 
@@ -82,6 +93,7 @@ export default class InstanceEditor {
         // --- Paramètres ---
         this.q('.edit-save').addEventListener('click', () => this.save())
         this.q('.edit-delete').addEventListener('click', () => this.deleteInstance())
+        this.q('.edit-export').addEventListener('click', () => this.exporter.open())
     }
 
     /**
@@ -100,7 +112,15 @@ export default class InstanceEditor {
             shell.openPath(dir)
         })
         q('.pane-modrinth').addEventListener('click', () => {
-            shell.openExternal(modrinthSearchUrl(kind, this.instance, kind === 'shaderpacks' ? this.shaderLoader : null))
+            if (this.home.offline) return this.home.showError('Une connexion internet est nécessaire pour parcourir Modrinth.')
+            this.home.browser.open(kind, this)
+        })
+        q('.pane-updates').addEventListener('click', e => {
+            if (this.home.offline) return this.home.showError('Une connexion internet est nécessaire pour chercher des mises à jour.')
+            this.checkUpdates(kind, { force: true, button: e.currentTarget })
+        })
+        q('.pane-summary').addEventListener('click', e => {
+            if (e.target.closest('.pane-update-all')) this.updateItems(kind, this.itemsOf(kind).filter(i => this.updates[kind].has(i.file)))
         })
         if (kind === 'resourcepacks') this.bindPackSorting(q('.pane-list'))
         let fileInput = q('.pane-file')
@@ -120,6 +140,7 @@ export default class InstanceEditor {
         q('.pane-list').addEventListener('click', e => {
             let item = itemOf(e.target)
             if (item && e.target.closest('.mod-delete')) this.removeItem(kind, item)
+            if (item && e.target.closest('.mod-update')) this.updateItems(kind, [item])
         })
         q('.pane-list').addEventListener('change', e => {
             let toggle = e.target.closest('.mod-toggle')
@@ -279,6 +300,9 @@ export default class InstanceEditor {
     open(instance, tab = null) {
         this.instance = instance
         this.formLoaded = false
+        Object.values(this.updates).forEach(map => map.clear())
+        Object.values(this.identified).forEach(set => set.clear())
+        this.root.querySelectorAll('.pane-modrinth, .pane-updates').forEach(btn => btn.classList.toggle('disabled', !!this.home.offline))
         this.root.querySelectorAll('.pane-search').forEach(input => input.value = '')
         this.renderHeader()
         this.form.reset(instance.loadder ? {
@@ -332,7 +356,8 @@ export default class InstanceEditor {
 
     /**
      * Ligne d'une liste de contenu.
-     * @param {{file: string, enabled: boolean, icon: string|null, letter: string, name: string, version?: string, badge?: string, meta: string, title?: string, toggleDisabled?: boolean, toggleTitle?: string, sortable?: boolean, rank?: number}} row
+     * @param {{file: string, enabled: boolean, icon: string|null, letter: string, name: string, version?: string, badge?: string, meta: string, title?: string, toggleDisabled?: boolean, toggleTitle?: string, sortable?: boolean, rank?: number, update?: string, upToDate?: boolean}} row
+     *        `update` : version disponible sur Modrinth ; `upToDate` : reconnu sur Modrinth, sans mise à jour
      */
     rowHTML(row) {
         let icon = row.icon
@@ -348,6 +373,9 @@ export default class InstanceEditor {
                     <div class="mod-meta" title="${escapeHTML(row.title || row.meta)}">${escapeHTML(row.meta)}</div>
                 </div>
                 <label class="switch${row.toggleDisabled ? ' locked' : ''}" title="${escapeHTML(row.toggleTitle || (row.enabled ? 'Désactiver' : 'Activer'))}"><input type="checkbox" class="mod-toggle"${row.enabled ? ' checked' : ''}${row.toggleDisabled ? ' disabled' : ''}/><span></span></label>
+                <div class="mod-status">${row.update
+                    ? `<div class="icon-btn update mod-update" title="${escapeHTML(`Mettre à jour vers ${row.update}`)}">${ICON_UPDATE}</div>`
+                    : (row.upToDate ? `<span class="mod-uptodate" title="À jour sur Modrinth">${ICON_CHECK}</span>` : '')}</div>
                 <div class="icon-btn danger mod-delete" title="Supprimer">${ICON_TRASH}</div>
             </div>`
     }
@@ -373,6 +401,7 @@ export default class InstanceEditor {
             mod.compat = mod.enabled ? checkCompatibility(mod.info, this.instance, this.mods) : null
         }
         this.renderMods()
+        this.scheduleUpdateCheck('mods')
         // Les shaders dépendent des mods installés (Iris, Oculus, OptiFine).
         if (this.modded) this.refreshPacks('shaderpacks')
     }
@@ -387,7 +416,7 @@ export default class InstanceEditor {
 
         this.q('[data-count="mods"]').textContent = this.mods.length
         pane.querySelector('.pane-summary').innerHTML = this.mods.length
-            ? `${enabled} actif${enabled > 1 ? 's' : ''} sur ${this.mods.length}${problems ? ` · <span class="orange">${problems} à vérifier</span>` : ''}`
+            ? `${enabled} actif${enabled > 1 ? 's' : ''} sur ${this.mods.length}${problems ? ` · <span class="orange">${problems} à vérifier</span>` : ''}${this.updatesSummary('mods')}`
             : ''
 
         if (!this.modded) {
@@ -424,7 +453,10 @@ export default class InstanceEditor {
             } else if (mod.compat?.unknown) {
                 badge = '<span class="mod-badge muted">Non vérifié</span>'
             }
+            let update = this.updates.mods.get(mod.file)?.latest
             return this.rowHTML({
+                update: update?.version_number,
+                upToDate: this.identified.mods.has(mod.file),
                 file: mod.file,
                 enabled: mod.enabled,
                 icon: info.icon,
@@ -567,6 +599,7 @@ export default class InstanceEditor {
         }
         this.packs[kind] = packs
         this.renderPacks(kind)
+        this.scheduleUpdateCheck(kind)
     }
 
     /**
@@ -622,6 +655,7 @@ export default class InstanceEditor {
                 ? (enabled ? `1 pack actif sur ${packs.length}` : `Shaders désactivés · ${packs.length} pack${packs.length > 1 ? 's' : ''}`)
                 : `${enabled} actif${enabled > 1 ? 's' : ''} sur ${packs.length}`)
                 + (problems ? ` · <span class="orange">${problems} à vérifier</span>` : '')
+                + this.updatesSummary(kind)
             : ''
 
         if (!packs.length) {
@@ -649,6 +683,8 @@ export default class InstanceEditor {
             else if (pack.compat === 'unknown') badge = '<span class="mod-badge muted">Non vérifié</span>'
             let meta = problem || info.description || (pack.folder ? 'Dossier' : pack.file)
             return this.rowHTML({
+                update: this.updates[kind].get(pack.file)?.latest?.version_number,
+                upToDate: this.identified[kind].has(pack.file),
                 file: pack.file,
                 enabled: pack.enabled,
                 icon: info.icon,
@@ -789,6 +825,152 @@ export default class InstanceEditor {
                 this.home.showError(`Import de ${name} impossible : ${escapeHTML(err.message)}`)
             }
             this.refreshPacks(kind)
+        }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Mises à jour Modrinth                                               */
+    /* ------------------------------------------------------------------ */
+
+    /** Vérification des mises à jour regroupée après une série de changements. */
+    scheduleUpdateCheck(kind) {
+        clearTimeout(this.updateTimers[kind])
+        this.updateTimers[kind] = setTimeout(() => this.checkUpdates(kind), 400)
+    }
+
+    /**
+     * Cherche les mises à jour d'un type de contenu. Sans `force`, le cache (6 h) suffit :
+     * ouvrir l'éditeur ne contacte Modrinth que pour les fichiers jamais vus.
+     * @param {"mods"|"resourcepacks"|"shaderpacks"} kind
+     * @param {{force?: boolean, button?: HTMLElement}} [options] `button` tourne pendant la recherche
+     */
+    async checkUpdates(kind, { force = false, button = null } = {}) {
+        if (this.home.offline || !this.instance || (kind !== 'resourcepacks' && !this.modded)) return
+        let instance = this.instance
+        let items = this.itemsOf(kind).filter(i => !i.folder)
+        button?.classList.add('spinning')
+        try {
+            let paths = items.map(i => i.path)
+            let found = await findUpdates(paths, {
+                loaders: contentLoaders(kind, instance, this.shaderLoader),
+                gameVersion: this.mcVersion,
+                force
+            })
+            let known = await identify(paths) // déjà en cache après findUpdates
+            if (this.instance !== instance) return
+            let byPath = new Map(items.map(i => [i.path, i.file]))
+            this.updates[kind] = new Map([...found].map(([file, update]) => [byPath.get(file), update]))
+            this.identified[kind] = new Set([...known].filter(([, v]) => v.version).map(([file]) => byPath.get(file)))
+            this.render(kind)
+        } catch (err) {
+            console.warn('[Modrinth] mises à jour indisponibles :', err.message)
+            if (force) this.home.showError(`Impossible de vérifier les mises à jour : ${escapeHTML(err.message)}`)
+        } finally {
+            button?.classList.remove('spinning')
+        }
+    }
+
+    /** Fin de la ligne de résumé : lien « n mises à jour ». */
+    updatesSummary(kind) {
+        let n = this.updates[kind].size
+        return n ? ` · <a class="pane-update-all" title="Tout mettre à jour">${n} mise${n > 1 ? 's' : ''} à jour disponible${n > 1 ? 's' : ''}</a>` : ''
+    }
+
+    /**
+     * Projets Modrinth installés dans l'instance (pour les dépendances).
+     * @returns {Promise<Set<string>>}
+     */
+    async installedProjects() {
+        let found = await identify(this.mods.map(m => m.path))
+        let ids = new Set([...found.values()].map(v => v.version?.project_id).filter(Boolean))
+        if (this.instance.fabricApi) ids.add(FABRIC_API_ID)
+        return ids
+    }
+
+    /**
+     * Met à jour des éléments après confirmation (l'avertissement rappelle que cela peut casser
+     * la configuration prévue par un modpack). Les nouvelles dépendances requises sont ajoutées.
+     * @param {"mods"|"resourcepacks"|"shaderpacks"} kind
+     * @param {object[]} items
+     */
+    async updateItems(kind, items) {
+        let entries = items.map(item => ({ item, ...this.updates[kind].get(item.file) })).filter(e => e.latest)
+        if (!entries.length) return
+        let name = e => e.item.info?.name || e.item.file
+
+        let plan = { dependencies: [] }
+        if (kind === 'mods') {
+            try {
+                plan = await resolveDependencies(entries.map(e => e.latest), {
+                    loaders: contentLoaders('mods', this.instance),
+                    gameVersion: this.mcVersion,
+                    installed: await this.installedProjects()
+                })
+            } catch (err) {
+                console.warn('[Modrinth] dépendances non vérifiées :', err.message)
+            }
+        }
+
+        let single = entries.length === 1
+        let list = entries.map(e => `${name(e)} : ${e.current.version_number} → ${e.latest.version_number}`)
+        let origin = this.instance.clonedFrom || this.instance.modpack
+        let { confirmed } = await confirmDialog({
+            title: single ? `Mettre à jour ${name(entries[0])} ?` : `Mettre à jour ${entries.length} éléments ?`,
+            icon: '!',
+            html: `${reasonsList(list, true)}${plan.dependencies.length ? `Nouvelles dépendances ajoutées :${reasonsList(plan.dependencies.map(v => `${v.project_title} ${v.version_number}`), true)}` : ''}
+                <div class="confirm-dialog-warning"><b>Attention :</b> une nouvelle version peut changer le comportement d'un mod ou remettre sa configuration à zéro.
+                ${origin ? 'Cette instance vient d\'un modpack, ses créateurs ont peut-être choisi ces versions exprès.' : 'Si un modpack fonctionne bien, mieux vaut ne pas tout mettre à jour d\'un coup.'}
+                Vous pourrez toujours réinstaller une ancienne version depuis Modrinth.</div>`,
+            confirmText: 'Mettre à jour',
+            busyText: 'Mise à jour...',
+            onConfirm: async (_, setStatus) => {
+                let temp = tempFolder()
+                try {
+                    let downloads = [...entries.map(e => e.latest), ...plan.dependencies]
+                    let files = []
+                    for (let [i, version] of downloads.entries()) {
+                        setStatus(`Téléchargement ${i + 1}/${downloads.length}...`)
+                        files.push(await downloadVersion(version, temp))
+                    }
+                    setStatus('Installation...')
+                    entries.forEach((e, i) => this.replaceItem(kind, e.item, files[i]))
+                    files.slice(entries.length).forEach(file => importMod(this.dir, file))
+                    return null
+                } catch (err) {
+                    console.error('[Modrinth]', err)
+                    return `Mise à jour impossible : ${err.message}`
+                } finally {
+                    fs.rmSync(temp, { recursive: true, force: true })
+                }
+            }
+        })
+        if (!confirmed) return
+        for (let e of entries) this.updates[kind].delete(e.item.file)
+        if (kind === 'mods') this.refreshMods()
+        else this.refreshPacks(kind)
+    }
+
+    /**
+     * Remplace un élément par sa nouvelle version en gardant son état : mod désactivé,
+     * position du pack de textures, shader actif.
+     * @param {"mods"|"resourcepacks"|"shaderpacks"} kind
+     * @param {object} item Élément installé
+     * @param {string} source Nouveau fichier
+     */
+    replaceItem(kind, item, source) {
+        if (kind === 'mods') {
+            deleteMod(this.dir, item.file)
+            let file = importMod(this.dir, source)
+            if (!item.enabled) setModEnabled(this.dir, file, false)
+            return
+        }
+        let order = this.activePackOrder()
+        deletePack(this.dir, kind, item.file)
+        let file = importPack(this.dir, kind, source)
+        if (kind === 'resourcepacks' && item.enabled) {
+            this.writePackOrder(order.map(f => (f === item.file ? file : f)))
+        } else if (kind === 'shaderpacks' && item.enabled && this.shaderLoader) {
+            setActiveShaderPack(this.dir, this.shaderLoader, file)
         }
     }
 

@@ -485,31 +485,3 @@ function versionsForFormat(format) {
     }
     return { first: RESOURCE_FORMATS[i][0], last };
 }
-
-/* ------------------------------------------------------------------ */
-/* Modrinth                                                            */
-/* ------------------------------------------------------------------ */
-
-/**
- * Page de recherche Modrinth filtrée pour l'instance : version de Minecraft, mod loader (mods)
- * ou chargeur de shaders (Iris pour Iris/Oculus, OptiFine).
- * @param {"mods"|"resourcepacks"|"shaderpacks"} kind
- * @param {object} instance
- * @param {{id: string}|null} [loader] Mod de shaders installé
- * @returns {string}
- */
-export function modrinthSearchUrl(kind, instance, loader = null) {
-    let params = [];
-    let type = instance?.loadder?.loadder_type || 'none';
-    if (kind === 'mods') {
-        // Quilt charge aussi les mods Fabric ; NeoForge 1.20.1 charge les mods Forge.
-        let loaders = { fabric: ['fabric'], quilt: ['quilt', 'fabric'], forge: ['forge'], neoforge: ['neoforge'] }[type] || [];
-        if (type === 'neoforge' && instance.loadder.minecraft_version === '1.20.1') loaders.push('forge');
-        params.push(...loaders.map(l => `g=categories:${l}`));
-    } else if (kind === 'shaderpacks') {
-        params.push(`g=categories:${loader?.id === 'optifine' ? 'optifine' : 'iris'}`);
-    }
-    if (instance?.loadder?.minecraft_version) params.push(`v=${encodeURIComponent(instance.loadder.minecraft_version)}`);
-    let page = { mods: 'mods', resourcepacks: 'resourcepacks', shaderpacks: 'shaders' }[kind];
-    return `https://modrinth.com/discover/${page}${params.length ? `?${params.join('&')}` : ''}`;
-}

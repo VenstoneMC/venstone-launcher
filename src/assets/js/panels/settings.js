@@ -6,6 +6,7 @@
 import { changePanel, accountSelect, database, popup, pkg } from '../utils.js'
 import { getGamePath, resolveInstanceSelection, instanceFolder } from '../utils/instances.js'
 import { sharedPath } from '../utils/shared.js'
+import { cacheStats, clearCache } from '../utils/modrinth.js'
 const { shell } = require('electron');
 const fs = require('fs');
 const os = require('os');
@@ -33,6 +34,7 @@ class Settings {
         this.javaPath()
         this.launcher()
         this.folders()
+        this.modrinthCache()
     }
 
     /**
@@ -355,6 +357,31 @@ class Settings {
                 if (name) target = `${instanceFolder(this.gamePath, { name })}/logs`;
             }
             this.openFolder(target);
+        });
+    }
+
+    /** Cache Modrinth : taille actuelle et bouton pour le vider. */
+    modrinthCache() {
+        let info = document.querySelector('.modrinth-cache-info');
+        let button = document.querySelector('.modrinth-cache-clear');
+        let refresh = async () => {
+            let { files } = await cacheStats();
+            info.textContent = files ? `${files} fichier${files > 1 ? 's' : ''} identifié${files > 1 ? 's' : ''} en cache.` : 'Le cache est vide.';
+        };
+        // L'onglet peut rester ouvert pendant que l'éditeur remplit le cache : chiffre relu à l'affichage.
+        document.querySelector('#launcher').addEventListener('click', refresh);
+        refresh();
+
+        button.addEventListener('click', async () => {
+            if (button.classList.contains('disabled')) return;
+            await clearCache();
+            await refresh();
+            button.classList.add('disabled');
+            button.textContent = 'Cache vidé';
+            setTimeout(() => {
+                button.classList.remove('disabled');
+                button.textContent = 'Vider le cache';
+            }, 2000);
         });
     }
 

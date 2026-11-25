@@ -7,15 +7,24 @@ import OfflineLaunch from '../utils/launch.js'
 import { prepareSharedData, finishSharedData } from '../utils/shared.js'
 import {
     INSTANCE_COLORS, getGamePath, getAllInstances, resolveInstanceSelection, isInstalled,
-    launchCacheFile, instanceFolder, validateName, createLocalInstance, cloneOfficialInstance, ensureFabricApi, hasInternet
+    launchCacheFile, instanceFolder, validateName, sanitizeName, createLocalInstance, cloneOfficialInstance, createInstanceFromModpack,
+    ensureFabricApi, hasInternet
 } from '../utils/instances.js'
-import InstanceForm, { escapeHTML, loaderLabel, paintIcon } from '../utils/instanceForm.js'
+import { readModpack, formatSize } from '../utils/mrpack.js'
+import { readZipEntry } from '../utils/zip.js'
+import { identify, getProjects } from '../utils/modrinth.js'
+import InstanceForm, { escapeHTML, loaderLabel, paintIcon, loadIconImage } from '../utils/instanceForm.js'
 import InstanceEditor from './instanceEditor.js'
-import { confirmDialog } from '../utils/dialog.js'
+import ModrinthBrowser from './modrinthBrowser.js'
+import { confirmDialog, choiceDialog, reasonsList } from '../utils/dialog.js'
 
 const { shell, ipcRenderer } = require('electron')
 const fs = require('fs')
+const nodeFetch = require('node-fetch')
 
+const ICON_PLUS = '<svg viewBox="0 0 24 24"><path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7z"/></svg>'
+const ICON_FILE = '<svg viewBox="0 0 24 24"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V9h5.5zM11 12v4.2l-1.6-1.6-1.4 1.4 4 4 4-4-1.4-1.4-1.6 1.6V12z"/></svg>'
+const ICON_GLOBE = '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm-1.9 2.2A8 8 0 0 0 4.06 11h3.97c.12-2.6.82-5 2.07-6.8zm3.8 0c1.25 1.8 1.95 4.2 2.07 6.8h3.97a8 8 0 0 0-6.04-6.8zM14 11c-.14-2.45-.9-4.6-2-6-1.1 1.4-1.86 3.55-2 6zm-4 2c.14 2.45.9 4.6 2 6 1.1-1.4 1.86-3.55 2-6zm-5.94 0a8 8 0 0 0 6.04 6.8C8.85 18 8.15 15.6 8.03 13zm11.91 0c-.12 2.6-.82 5-2.07 6.8A8 8 0 0 0 19.94 13z"/></svg>'
 const ICON_CHECK = '<svg viewBox="0 0 24 24"><path d="M9.5 16.2 5.3 12l-1.4 1.4 5.6 5.6L20.1 8.4 18.7 7z"/></svg>'
 const ICON_GEAR = '<svg viewBox="0 0 24 24"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.4-2.6a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>'
 
@@ -131,6 +140,7 @@ class Home {
         this.bindInstanceUI()
         this.bindCreateUI()
         this.editor = new InstanceEditor(this)
+        this.browser = new ModrinthBrowser(this)
         // Un fichier lâché hors d'une zone prévue ne doit pas ouvrir le fichier dans la fenêtre.
         document.addEventListener('dragover', e => e.preventDefault())
         document.addEventListener('drop', e => e.preventDefault())
@@ -483,7 +493,8 @@ class Home {
         let state = ''
         if (instance.name === selected) state = `<div class="instance-card-state selected">${ICON_CHECK}</div>`
         else if (unavailable) state = `<div class="instance-card-state warn" title="Connexion requise pour l'installer">Hors-ligne</div>`
-        else if (!installed && !fs.existsSync(instanceFolder(this.gamePath, instance))) state =`<div class="instance-card-state muted" title="Sera téléchargée au premier lancement">À installer</div>`
+        // Instances perso : pas de mention « À installer », pour laisser la place au nom.
+        else if (!instance.local && !installed && !fs.existsSync(instanceFolder(this.gamePath, instance))) state = `<div class="instance-card-state muted" title="Sera téléchargée au premier lancement">À installer</div>`
 
         let actions = instance.local ? `
             <div class="instance-card-actions">
@@ -511,31 +522,50 @@ class Home {
      */
     renderInstanceLists(selected) {
         let officialList = document.querySelector('.instances-List')
-        let localList = document.querySelector('.custom-instances-List')
-        let count = document.querySelector('.custom-instances-count')
         let subtitle = document.querySelector('.instances-subtitle')
-        let createBTN = document.querySelector('.create-custom-instance')
-
-        officialList.innerHTML = ''
-        localList.innerHTML = ''
 
         subtitle.innerHTML = this.offline
             ? '<span class="offline-pill">Hors-ligne</span> Seules les instances déjà installées peuvent être lancées.'
             : "Vos mondes, serveurs et captures d'écran sont partagés entre toutes les instances."
 
+        officialList.innerHTML = ''
         if (!this.instances.official.length) {
             officialList.innerHTML = `<div class="instances-empty">${this.offline ? 'Instances officielles indisponibles hors-ligne.' : 'Aucune instance officielle disponible.'}</div>`
         }
         for (let instance of this.instances.official) officialList.appendChild(this.instanceCard(instance, selected))
 
-        if (!this.instances.locals.length) {
-            localList.innerHTML = '<div class="instances-empty">Vous n\'avez pas encore d\'instance personnelle.<br>Créez-en une avec la version et le loader de votre choix.</div>'
-        }
-        for (let instance of this.instances.locals) localList.appendChild(this.instanceCard(instance, selected))
+        document.querySelector('.custom-instances-count').textContent = this.instances.locals.length
+        // La recherche n'apparaît que lorsqu'il y a de quoi chercher.
+        document.querySelector('.local-search-box').classList.toggle('hidden', this.instances.locals.length < 5)
+        this.renderLocalInstances(selected)
+    }
 
-        count.textContent = this.instances.locals.length
-        createBTN.classList.toggle('disabled', this.offline)
-        createBTN.title = this.offline ? 'Connexion internet requise' : ''
+    /**
+     * Grille « Mes instances », filtrée par la recherche.
+     * @param {string} [selected] Nom de l'instance sélectionnée
+     */
+    renderLocalInstances(selected = this.currentInstance?.name) {
+        let list = document.querySelector('.custom-instances-List')
+        let search = document.querySelector('.local-search').value.trim().toLowerCase()
+        let locals = this.instances.locals
+        let shown = locals.filter(i => !search || i.name.toLowerCase().includes(search)
+            || String(i.loadder?.minecraft_version || '').includes(search)
+            || String(i.loadder?.loadder_type || '').includes(search))
+
+        list.innerHTML = ''
+        if (!locals.length) {
+            list.innerHTML = `<div class="instances-empty instances-empty-local">
+                <b>Aucune instance personnelle</b>
+                Créez une instance avec la version et les mods de votre choix, ou importez un modpack.
+                <div class="new-instance">+ Nouvelle instance</div>
+            </div>`
+            return
+        }
+        if (!shown.length) {
+            list.innerHTML = '<div class="instances-empty">Aucune instance ne correspond à votre recherche.</div>'
+            return
+        }
+        for (let instance of shown) list.appendChild(this.instanceCard(instance, selected))
     }
 
     /**
@@ -607,7 +637,7 @@ class Home {
             if (e.target === instancePopup) this.closePopup('.instance-popup')
         })
 
-        instancePopup.querySelector('.instances-columns').addEventListener('click', async e => {
+        instancePopup.querySelector('.instances-body').addEventListener('click', async e => {
             let card = e.target.closest('.instance-card')
             if (!card) return
             let name = card.dataset.name
@@ -625,12 +655,155 @@ class Home {
             setTimeout(() => this.closePopup('.instance-popup'), 120)
         })
 
-        document.querySelector('.create-custom-instance').addEventListener('click', e => {
-            if (e.currentTarget.classList.contains('disabled')) return
-            this.closePopup('.instance-popup')
-            this.openCreate()
+        // Un seul bouton pour ajouter une instance : vide, depuis un fichier ou depuis Modrinth.
+        instancePopup.addEventListener('click', e => {
+            if (e.target.closest('.new-instance')) this.newInstance()
+        })
+        document.querySelector('.local-search').addEventListener('input', () => this.renderLocalInstances())
+
+        let modpackInput = document.querySelector('.import-modpack-file')
+        modpackInput.addEventListener('change', () => {
+            let file = modpackInput.files[0]?.path
+            if (file) this.importModpack(file)
+        })
+        instancePopup.addEventListener('drop', e => {
+            let file = [...(e.dataTransfer?.files || [])].map(f => f.path).find(f => /\.(mrpack|zip)$/i.test(f || ''))
+            if (file) this.importModpack(file)
         })
 
+    }
+
+    /**
+     * Importe un modpack .mrpack dans une nouvelle instance personnelle : résumé, choix du nom,
+     * puis téléchargement des fichiers (progression affichée dans la boîte).
+     * @param {string} file .mrpack (ou .zip au même format)
+     * @param {{iconUrl?: string, title?: string}} [options] Icône et nom du projet Modrinth, s'ils sont déjà connus
+     * @returns {Promise<boolean>} Instance créée
+     */
+    async importModpack(file, { iconUrl = null, title = null } = {}) {
+        if (this.playing) {
+            this.showError("Fermez le jeu avant d'importer un modpack.")
+            return false
+        }
+        let pack
+        try {
+            pack = await readModpack(file)
+        } catch (err) {
+            console.error('[Modpack]', err)
+            this.showError(`Import impossible : ${escapeHTML(err.message)}`)
+            return false
+        }
+        if (this.offline && pack.downloads.length) {
+            this.showError('Ce modpack doit télécharger ses mods : une connexion internet est nécessaire.')
+            return false
+        }
+
+        let base = sanitizeName(title || pack.name) || 'Modpack'
+        let suggestion = base
+        for (let n = 2; (await validateName(suggestion, this.instances.official)).error && n < 50; n++) {
+            suggestion = `${base.slice(0, 32 - String(n).length - 1)} ${n}`
+        }
+
+        let l = pack.loadder
+        let loader = escapeHTML(loaderLabel({ loadder: l }))
+        let lines = [
+            `<b>${escapeHTML(title || pack.name)}</b>${pack.version ? ` <span class="muted">${escapeHTML(pack.version)}</span>` : ''}`,
+            `Minecraft <b>${escapeHTML(l.minecraft_version)}</b> · <b>${loader}</b>`,
+            `${pack.downloads.length} fichier${pack.downloads.length > 1 ? 's' : ''} à télécharger${pack.size ? ` (${formatSize(pack.size)})` : ''}, ${pack.overrides} inclus dans le modpack`
+        ]
+        let icon = await this.modpackIcon(pack, iconUrl)
+        let summary = pack.summary ? `<div class="modpack-summary">${escapeHTML(pack.summary)}</div>` : ''
+        let warning = pack.foreignHosts.length
+            ? `<div class="confirm-dialog-warning"><b>Attention :</b> certains fichiers proviennent de sites non vérifiés par Modrinth :${reasonsList(pack.foreignHosts)}N'importez ce modpack que si vous avez confiance en sa source.</div>`
+            : ''
+
+        let created = null
+        let { confirmed } = await confirmDialog({
+            title: 'Importer ce modpack ?',
+            icon: '↓',
+            html: `<div class="modpack-info">${icon ? `<img class="modpack-icon" src="${icon}"/>` : ''}<div>${lines.join('<br>')}</div></div>${summary}${warning}<b>Nom de l'instance</b>`,
+            input: { value: suggestion, placeholder: "Nom de l'instance" },
+            confirmText: 'Importer',
+            busyText: 'Import en cours...',
+            onConfirm: async (value, setStatus) => {
+                let check = await validateName(value, this.instances.official)
+                if (check.error) return check.error
+                try {
+                    created = await createInstanceFromModpack(pack, check.name, this.gamePath, { icon, onProgress: setStatus })
+                } catch (err) {
+                    console.error('[Modpack]', err)
+                    return `Import impossible : ${err.message}`
+                }
+                return null
+            }
+        })
+        if (!confirmed || !created) return false
+
+        this.closePopup('.instance-popup')
+        await this.refreshInstances()
+        await this.selectInstance(created.name)
+        this.editor.open(created)
+        return true
+    }
+
+    /** Ajout d'une instance personnelle : vide, depuis un fichier modpack ou depuis Modrinth. */
+    async newInstance() {
+        let offline = 'Connexion internet requise.'
+        let choice = await choiceDialog({
+            title: 'Nouvelle instance',
+            choices: [
+                {
+                    id: 'empty', icon: ICON_PLUS, title: 'Instance vide', disabled: this.offline,
+                    description: this.offline ? offline : 'Choisissez la version de Minecraft et le mod loader, puis ajoutez vos mods.'
+                },
+                {
+                    id: 'modrinth', icon: ICON_GLOBE, title: 'Modpack Modrinth', disabled: this.offline,
+                    description: this.offline ? offline : 'Parcourez les modpacks publiés sur Modrinth et installez-en un en un clic.'
+                },
+                { id: 'file', icon: ICON_FILE, title: 'Modpack depuis un fichier', description: 'Un modpack au format Modrinth (.mrpack ou .zip) déjà téléchargé.' }
+            ]
+        })
+        if (choice === 'empty') {
+            this.closePopup('.instance-popup')
+            this.openCreate()
+        } else if (choice === 'modrinth') {
+            this.closePopup('.instance-popup')
+            this.browser.open('modpacks')
+        } else if (choice === 'file') {
+            let input = document.querySelector('.import-modpack-file')
+            input.value = ''
+            input.click()
+        }
+    }
+
+    /**
+     * Icône d'un modpack (data URL PNG 128 px) : celle du projet Modrinth (connue, ou retrouvée
+     * à partir du fichier), sinon un icon.png à la racine de l'archive.
+     * @param {object} pack Résultat de readModpack
+     * @param {string|null} iconUrl
+     * @returns {Promise<string|null>}
+     */
+    async modpackIcon(pack, iconUrl) {
+        let image = null
+        try {
+            if (!this.offline && !iconUrl) {
+                let version = (await identify([pack.file])).get(pack.file)?.version
+                if (version) iconUrl = (await getProjects([version.project_id])).get(version.project_id)?.icon_url
+            }
+            if (!this.offline && iconUrl) {
+                let res = await nodeFetch(iconUrl, { timeout: 10000 })
+                if (res.ok) image = await res.buffer()
+            }
+        } catch (err) {
+            console.warn('[Modpack] icône Modrinth indisponible :', err.message)
+        }
+        try {
+            let entry = !image && pack.entries.find(e => e.name === 'icon.png')
+            if (entry) image = await readZipEntry(pack.file, entry)
+            return image ? await loadIconImage(new Blob([image])) : null
+        } catch {
+            return null // format d'image non pris en charge (SVG...)
+        }
     }
 
     /* ------------------------------------------------------------------ */

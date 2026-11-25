@@ -10,6 +10,7 @@ const { ipcRenderer } = require('electron');
 
 import config from './config.js';
 import { unlinkSharedData } from './shared.js';
+import { installModpack } from './mrpack.js';
 
 const TIMEOUT = 8000;
 const FORBIDDEN_CHARS = /[<>:"/\\|?*\x00-\x1F]/g;
@@ -164,6 +165,7 @@ export async function createLocalInstance(data) {
             loadder_version: data.loadder_version
         },
         fabricApi: data.fabricApi || null,
+        ...(data.modpack ? { modpack: data.modpack } : {}),
         verify: false,
         ignored: [],
         whitelist: [],
@@ -172,6 +174,34 @@ export async function createLocalInstance(data) {
     list.push(instance);
     await saveLocalInstances(list);
     return { ...instance, local: true };
+}
+
+/**
+ * Crée une instance personnelle à partir d'un modpack .mrpack (lu par `readModpack`) :
+ * télécharge ses fichiers et copie ses overrides. En cas d'échec, rien n'est conservé.
+ * @param {object} pack
+ * @param {string} name Nom de l'instance (déjà validé)
+ * @param {string} gamePath
+ * @param {{icon?: string|null, onProgress?: (text: string) => void}} [options] `icon` : data URL PNG
+ * @returns {Promise<object>} Instance créée
+ */
+export async function createInstanceFromModpack(pack, name, gamePath, { icon = null, onProgress } = {}) {
+    let dir = instanceFolder(gamePath, { name });
+    if (fs.existsSync(dir)) throw new Error(`Un dossier "${name}" existe déjà dans les instances.`);
+    try {
+        await installModpack(pack, dir, onProgress);
+    } catch (err) {
+        fs.rmSync(dir, { recursive: true, force: true });
+        throw err;
+    }
+    return createLocalInstance({
+        name,
+        color: INSTANCE_COLORS[Math.floor(Math.random() * INSTANCE_COLORS.length)],
+        icon,
+        ...pack.loadder,
+        fabricApi: null, // déjà fournie par le modpack s'il en a besoin
+        modpack: { name: pack.name, version: pack.version }
+    });
 }
 
 /**
