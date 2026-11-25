@@ -24,6 +24,28 @@ if (dev) {
     app.setPath('appData', appdata)
 }
 
+/**
+ * La base locale (comptes, configuration) était dans <userData>/databases, le dossier de
+ * WebSQL : Chromium, qui ne gère plus WebSQL, le supprime à l'ouverture de la première
+ * fenêtre. Elle est déplacée vers <userData>/launcher-db (voir utils/database.js) avant que
+ * Chromium ne démarre son stockage.
+ */
+function migrateDatabase() {
+    if (dev) return; // en dev, la base est dans data/Databases.sqlite
+    let userData = app.getPath('userData');
+    let oldFile = path.join(userData, 'databases', 'Databases.db');
+    let newDir = path.join(userData, 'launcher-db');
+    let newFile = path.join(newDir, 'Databases.db');
+    try {
+        if (!fs.existsSync(oldFile) || fs.existsSync(newFile)) return;
+        fs.mkdirSync(newDir, { recursive: true });
+        fs.renameSync(oldFile, newFile);
+    } catch (err) {
+        console.error('[Database] déplacement impossible :', err);
+    }
+}
+migrateDatabase();
+
 if (!app.requestSingleInstanceLock()) app.quit();
 else app.whenReady().then(() => {
     if (dev) return MainWindow.createWindow()
