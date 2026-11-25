@@ -3,7 +3,8 @@
  * Luuxis License v1.0 (voir fichier LICENSE pour les détails en FR/EN)
  */
 
-const { app, BrowserWindow, Menu, shell } = require("electron");
+const { app, BrowserWindow, Menu } = require("electron");
+const { secureWindow } = require("./security.js");
 const path = require("path");
 const os = require("os");
 const pkg = require("../../../../package.json");
@@ -39,17 +40,17 @@ function createWindow() {
         frame: false,
         show: false,
         webPreferences: {
-            contextIsolation: false,
-            nodeIntegration: true
+            // Code du launcher dans le preload, page sans accès à Node.js (voir preload.mjs).
+            preload: path.join(app.getAppPath(), 'src/preload.mjs'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false
         },
     });
     Menu.setApplicationMenu(null);
     mainWindow.setMenuBarVisibility(false);
     // Liens externes (carte, guide, discord, skins...) : navigateur par défaut.
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-        if (/^https?:\/\//.test(url)) shell.openExternal(url);
-        return { action: 'deny' };
-    });
+    secureWindow(mainWindow);
     mainWindow.loadFile(path.join(`${app.getAppPath()}/src/launcher.html`));
     mainWindow.once('ready-to-show', () => {
         if (mainWindow) {

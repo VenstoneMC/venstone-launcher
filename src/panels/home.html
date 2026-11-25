@@ -107,25 +107,32 @@
                 </div>
                 <div class="close-popup icon-close"></div>
             </div>
-            <div class="instances-columns">
-                <section class="instances-section instances-section-official">
+            <div class="instances-body">
+                <section class="instances-official">
                     <div class="section-title">
                         <img src="assets/images/icon.png" class="section-title-icon"/>
                         Instances officielles
+                        <span class="section-hint">Gérées par Venstone, toujours à jour pour le serveur</span>
                     </div>
-                    <div class="instances-List"></div>
+                    <div class="instances-List instances-grid"></div>
                 </section>
-                <section class="instances-section instances-section-local">
+
+                <section class="instances-local">
                     <div class="section-title">
                         Mes instances
                         <span class="section-count custom-instances-count">0</span>
+                        <div class="local-tools">
+                            <div class="mods-search-box local-search-box">
+                                <svg viewBox="0 0 24 24"><path d="M10.5 3a7.5 7.5 0 0 1 5.96 12.06l4.24 4.24-1.4 1.4-4.24-4.24A7.5 7.5 0 1 1 10.5 3zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/></svg>
+                                <input type="text" class="mods-search local-search" placeholder="Rechercher..." spellcheck="false"/>
+                            </div>
+                            <div class="new-instance"><span class="create-plus">+</span> Nouvelle instance</div>
+                        </div>
                     </div>
-                    <div class="custom-instances-List"></div>
-                    <div class="create-custom-instance">
-                        <span class="create-plus">+</span> Créer une instance
-                    </div>
+                    <div class="custom-instances-List instances-grid"></div>
                 </section>
             </div>
+            <input type="file" class="import-modpack-file hidden-file" accept=".mrpack,.zip"/>
         </div>
 
     </div>
@@ -232,6 +239,9 @@
                 <div class="edit-tab-btn" data-tab="general">Paramètres de l'instance</div>
             </div>
 
+            <!-- Nouvelle version du modpack d'origine (instances importées depuis Modrinth) -->
+            <div class="edit-modpack-banner"></div>
+
             <!-- Onglets de contenu : mods, packs de textures, shaders -->
             <div class="edit-pane edit-pane-mods content-pane active" data-kind="mods">
                 <div class="mods-toolbar">
@@ -240,8 +250,9 @@
                         <input type="text" class="mods-search pane-search" placeholder="Rechercher un mod..." spellcheck="false"/>
                     </div>
                     <div class="tool-btn pane-folder" data-tip="Ouvrir le dossier"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
-                    <div class="tool-btn pane-modrinth" data-tip="Rechercher sur Modrinth"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm-1.9 2.2A8 8 0 0 0 4.06 11h3.97c.12-2.6.82-5 2.07-6.8zm3.8 0c1.25 1.8 1.95 4.2 2.07 6.8h3.97a8 8 0 0 0-6.04-6.8zM14 11c-.14-2.45-.9-4.6-2-6-1.1 1.4-1.86 3.55-2 6zm-4 2c.14 2.45.9 4.6 2 6 1.1-1.4 1.86-3.55 2-6zm-5.94 0a8 8 0 0 0 6.04 6.8C8.85 18 8.15 15.6 8.03 13zm11.91 0c-.12 2.6-.82 5-2.07 6.8A8 8 0 0 0 19.94 13z"/></svg></div>
-                    <div class="btn-small pane-import">+ Importer des mods</div>
+                    <div class="tool-btn pane-updates" data-tip="Rechercher des mises à jour"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg></div>
+                    <div class="btn-small btn-ghost pane-import" data-tip="Ajouter des fichiers .jar"><svg viewBox="0 0 24 24"><path d="M11 16h2V6.8l3.3 3.3 1.4-1.4L12 3 6.3 8.7l1.4 1.4L11 6.8zM4 18h16v2H4z"/></svg> Importer</div>
+                    <div class="btn-small pane-modrinth" data-tip="Rechercher sur internet"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm-1.9 2.2A8 8 0 0 0 4.06 11h3.97c.12-2.6.82-5 2.07-6.8zm3.8 0c1.25 1.8 1.95 4.2 2.07 6.8h3.97a8 8 0 0 0-6.04-6.8zM14 11c-.14-2.45-.9-4.6-2-6-1.1 1.4-1.86 3.55-2 6zm-4 2c.14 2.45.9 4.6 2 6 1.1-1.4 1.86-3.55 2-6zm-5.94 0a8 8 0 0 0 6.04 6.8C8.85 18 8.15 15.6 8.03 13zm11.91 0c-.12 2.6-.82 5-2.07 6.8A8 8 0 0 0 19.94 13z"/></svg> Parcourir Modrinth</div>
                     <input type="file" class="mods-file pane-file" accept=".jar" multiple/>
                 </div>
                 <div class="pane-banner"></div>
@@ -259,8 +270,9 @@
                         <input type="text" class="mods-search pane-search" placeholder="Rechercher un pack de textures..." spellcheck="false"/>
                     </div>
                     <div class="tool-btn pane-folder" data-tip="Ouvrir le dossier"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
-                    <div class="tool-btn pane-modrinth" data-tip="Rechercher sur Modrinth"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm-1.9 2.2A8 8 0 0 0 4.06 11h3.97c.12-2.6.82-5 2.07-6.8zm3.8 0c1.25 1.8 1.95 4.2 2.07 6.8h3.97a8 8 0 0 0-6.04-6.8zM14 11c-.14-2.45-.9-4.6-2-6-1.1 1.4-1.86 3.55-2 6zm-4 2c.14 2.45.9 4.6 2 6 1.1-1.4 1.86-3.55 2-6zm-5.94 0a8 8 0 0 0 6.04 6.8C8.85 18 8.15 15.6 8.03 13zm11.91 0c-.12 2.6-.82 5-2.07 6.8A8 8 0 0 0 19.94 13z"/></svg></div>
-                    <div class="btn-small pane-import">+ Importer des packs</div>
+                    <div class="tool-btn pane-updates" data-tip="Rechercher des mises à jour"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg></div>
+                    <div class="btn-small btn-ghost pane-import" data-tip="Ajouter des fichiers .zip ou des dossiers"><svg viewBox="0 0 24 24"><path d="M11 16h2V6.8l3.3 3.3 1.4-1.4L12 3 6.3 8.7l1.4 1.4L11 6.8zM4 18h16v2H4z"/></svg> Importer</div>
+                    <div class="btn-small pane-modrinth" data-tip="Rechercher sur internet"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm-1.9 2.2A8 8 0 0 0 4.06 11h3.97c.12-2.6.82-5 2.07-6.8zm3.8 0c1.25 1.8 1.95 4.2 2.07 6.8h3.97a8 8 0 0 0-6.04-6.8zM14 11c-.14-2.45-.9-4.6-2-6-1.1 1.4-1.86 3.55-2 6zm-4 2c.14 2.45.9 4.6 2 6 1.1-1.4 1.86-3.55 2-6zm-5.94 0a8 8 0 0 0 6.04 6.8C8.85 18 8.15 15.6 8.03 13zm11.91 0c-.12 2.6-.82 5-2.07 6.8A8 8 0 0 0 19.94 13z"/></svg> Parcourir Modrinth</div>
                     <input type="file" class="mods-file pane-file" accept=".zip" multiple/>
                 </div>
                 <div class="pane-banner"></div>
@@ -278,8 +290,9 @@
                         <input type="text" class="mods-search pane-search" placeholder="Rechercher un pack de shaders..." spellcheck="false"/>
                     </div>
                     <div class="tool-btn pane-folder" data-tip="Ouvrir le dossier"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
-                    <div class="tool-btn pane-modrinth" data-tip="Rechercher sur Modrinth"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm-1.9 2.2A8 8 0 0 0 4.06 11h3.97c.12-2.6.82-5 2.07-6.8zm3.8 0c1.25 1.8 1.95 4.2 2.07 6.8h3.97a8 8 0 0 0-6.04-6.8zM14 11c-.14-2.45-.9-4.6-2-6-1.1 1.4-1.86 3.55-2 6zm-4 2c.14 2.45.9 4.6 2 6 1.1-1.4 1.86-3.55 2-6zm-5.94 0a8 8 0 0 0 6.04 6.8C8.85 18 8.15 15.6 8.03 13zm11.91 0c-.12 2.6-.82 5-2.07 6.8A8 8 0 0 0 19.94 13z"/></svg></div>
-                    <div class="btn-small pane-import">+ Importer des shaders</div>
+                    <div class="tool-btn pane-updates" data-tip="Rechercher des mises à jour"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg></div>
+                    <div class="btn-small btn-ghost pane-import" data-tip="Ajouter des fichiers .zip ou des dossiers"><svg viewBox="0 0 24 24"><path d="M11 16h2V6.8l3.3 3.3 1.4-1.4L12 3 6.3 8.7l1.4 1.4L11 6.8zM4 18h16v2H4z"/></svg> Importer</div>
+                    <div class="btn-small pane-modrinth" data-tip="Rechercher sur internet"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm-1.9 2.2A8 8 0 0 0 4.06 11h3.97c.12-2.6.82-5 2.07-6.8zm3.8 0c1.25 1.8 1.95 4.2 2.07 6.8h3.97a8 8 0 0 0-6.04-6.8zM14 11c-.14-2.45-.9-4.6-2-6-1.1 1.4-1.86 3.55-2 6zm-4 2c.14 2.45.9 4.6 2 6 1.1-1.4 1.86-3.55 2-6zm-5.94 0a8 8 0 0 0 6.04 6.8C8.85 18 8.15 15.6 8.03 13zm11.91 0c-.12 2.6-.82 5-2.07 6.8A8 8 0 0 0 19.94 13z"/></svg> Parcourir Modrinth</div>
                     <input type="file" class="mods-file pane-file" accept=".zip" multiple/>
                 </div>
                 <div class="pane-banner"></div>
@@ -351,21 +364,171 @@
                                 <select class="field-input create-fabricapi-version"></select>
                             </div>
                         </div>
+
+                        <!-- Réglages propres à l'instance (sinon ceux des paramètres du launcher) -->
+                        <div class="field-section">Réglages avancés</div>
+                        <div class="field-row">
+                            <div class="field">
+                                <div class="field-label-row">
+                                    <label class="field-label">Mémoire allouée</label>
+                                    <label class="toggle-small">
+                                        <input type="checkbox" class="edit-memory-custom"/>
+                                        <span>Personnaliser</span>
+                                    </label>
+                                </div>
+                                <div class="memory-inputs">
+                                    <input type="number" class="field-input edit-memory-min" min="0.5" step="0.5"/>
+                                    <span>à</span>
+                                    <input type="number" class="field-input edit-memory-max" min="0.5" step="0.5"/>
+                                    <span>Go</span>
+                                </div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label-row">
+                                    <label class="field-label">Java</label>
+                                    <label class="toggle-small">
+                                        <input type="checkbox" class="edit-java-custom"/>
+                                        <span>Personnaliser</span>
+                                    </label>
+                                </div>
+                                <div class="java-inputs">
+                                    <input type="text" class="field-input edit-java-path" readonly/>
+                                    <div class="tool-btn edit-java-pick" data-tip="Choisir java ou javaw"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+                                </div>
+                                <input type="file" class="hidden-file edit-java-file"/>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="field-label">Arguments JVM de l'instance</label>
+                            <input type="text" class="field-input edit-jvm-args" spellcheck="false" placeholder="Ajoutés après ceux des paramètres du launcher"/>
+                        </div>
                     </div>
 
                     <aside class="edit-side">
+                        <div class="edit-actions">
+                            <div class="btn btn-secondary edit-export" title="Exporter en modpack Modrinth (.mrpack)">
+                                <svg viewBox="0 0 24 24"><path d="M11 16h2V6.8l3.3 3.3 1.4-1.4L12 3 6.3 8.7l1.4 1.4L11 6.8zM4 18h16v2H4z"/></svg> Exporter
+                            </div>
+                            <div class="btn btn-secondary edit-duplicate" title="Créer une copie de cette instance">
+                                <svg viewBox="0 0 24 24"><path d="M8 3h11a2 2 0 0 1 2 2v11h-2V5H8zM4 7h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm0 2v11h11V9z"/></svg> Dupliquer
+                            </div>
+                            <div class="btn btn-danger-ghost edit-delete" title="Supprimer l'instance">
+                                <svg viewBox="0 0 24 24"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 11a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1z"/></svg> Supprimer
+                            </div>
+                        </div>
                         <div class="edit-note edit-version-note">
                             Changer de version ou de loader peut rendre certains mods incompatibles. Ils seront signalés dans l'onglet Mods.
                         </div>
                         <div class="create-error"></div>
                         <div class="btn btn-primary edit-save disabled">Enregistrer</div>
-                        <div class="edit-danger">
-                            <div class="edit-danger-title">Zone de danger</div>
-                            <div class="btn btn-danger-ghost edit-delete">Supprimer l'instance</div>
-                        </div>
                     </aside>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Export d'une instance en modpack (.mrpack) -->
+    <div class="export-popup modal-overlay">
+        <div class="export-tab modal-window">
+            <div class="modal-header">
+                <div class="modal-header-left">
+                    <div class="modal-back export-back" title="Retour">
+                        <div class="icon-arrow"></div>
+                    </div>
+                    <div>
+                        <p class="modal-title">Exporter le modpack</p>
+                        <p class="modal-subtitle export-subtitle">Fichier .mrpack, importable dans Modrinth, Prism Launcher ou un autre launcher Venstone.</p>
+                    </div>
+                </div>
+                <div class="close-popup export-close icon-close"></div>
+            </div>
+
+            <div class="export-body">
+                <div class="create-form export-fields">
+                    <div class="field">
+                        <label class="field-label" for="export-name">Nom du modpack</label>
+                        <input type="text" id="export-name" class="field-input export-name" maxlength="64" spellcheck="false"/>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="export-version">Numéro de version</label>
+                        <input type="text" id="export-version" class="field-input export-version" maxlength="32" spellcheck="false" placeholder="1.0.0"/>
+                    </div>
+                    <div class="field export-summary-field">
+                        <label class="field-label" for="export-summary">Description</label>
+                        <textarea id="export-summary" class="field-input export-summary" maxlength="500" placeholder="Description du modpack..."></textarea>
+                    </div>
+                </div>
+
+                <div class="export-files">
+                    <div class="export-files-head">
+                        <span>Fichiers et dossiers à inclure</span>
+                        <span class="export-files-count"></span>
+                    </div>
+                    <div class="export-tree"></div>
+                    <div class="export-hint">Ce qui vient de Modrinth sera retéléchargé à l'import, le reste est copié dans le fichier. Vos mondes, captures d'écran et serveurs ne sont pas exportés.</div>
+                </div>
+            </div>
+
+            <div class="export-footer">
+                <div class="export-status"></div>
+                <div class="btn btn-secondary export-cancel">Annuler</div>
+                <div class="btn btn-primary export-submit">Exporter</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation Modrinth : mods, packs de textures, shaders et modpacks -->
+    <div class="browse-popup modal-overlay">
+        <div class="browse-tab modal-window">
+            <div class="modal-header">
+                <div class="modal-header-left">
+                    <div class="modal-back browse-back" title="Retour">
+                        <div class="icon-arrow"></div>
+                    </div>
+                    <div class="browse-heading">
+                        <p class="modal-title browse-title">Parcourir Modrinth</p>
+                        <p class="modal-subtitle browse-subtitle"></p>
+                    </div>
+                </div>
+                <div class="close-popup browse-close icon-close"></div>
+            </div>
+
+            <div class="edit-tabs browse-kinds">
+                <div class="edit-tab-btn" data-kind="mods">Mods</div>
+                <div class="edit-tab-btn" data-kind="resourcepacks">Packs de textures</div>
+                <div class="edit-tab-btn" data-kind="shaderpacks">Shaders</div>
+            </div>
+
+            <div class="mods-toolbar browse-toolbar">
+                <div class="mods-search-box">
+                    <svg viewBox="0 0 24 24"><path d="M10.5 3a7.5 7.5 0 0 1 5.96 12.06l4.24 4.24-1.4 1.4-4.24-4.24A7.5 7.5 0 1 1 10.5 3zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/></svg>
+                    <input type="text" class="mods-search browse-search" placeholder="Rechercher sur Modrinth..." spellcheck="false"/>
+                </div>
+                <select class="field-input browse-select browse-version" title="Version de Minecraft"></select>
+                <select class="field-input browse-select browse-loader" title="Mod loader">
+                    <option value="">Tous les loaders</option>
+                    <option value="fabric">Fabric</option>
+                    <option value="quilt">Quilt</option>
+                    <option value="forge">Forge</option>
+                    <option value="neoforge">NeoForge</option>
+                </select>
+                <select class="field-input browse-select browse-sort" title="Trier par">
+                    <option value="relevance">Pertinence</option>
+                    <option value="downloads">Téléchargements</option>
+                    <option value="follows">Popularité</option>
+                    <option value="updated">Mis à jour</option>
+                    <option value="newest">Nouveautés</option>
+                </select>
+            </div>
+
+            <div class="browse-body">
+                <div class="browse-results"></div>
+                <section class="browse-page hidden"></section>
+                <aside class="browse-detail"></aside>
+            </div>
+
+            <!-- Image de la galerie en grand -->
+            <div class="browse-lightbox hidden"></div>
         </div>
     </div>
 </div>

@@ -9,7 +9,7 @@ import Settings from './panels/settings.js';
 
 // import modules
 import { logger, config, changePanel, database, popup, setBackground, accountSelect, addAccount, pkg, offlineAccount } from './utils.js';
-const { AZauth, Microsoft, Mojang } = require('minecraft-java-core');
+const { AZauth, Mojang } = require('minecraft-java-core');
 
 // libs
 const { ipcRenderer } = require('electron');
@@ -155,30 +155,11 @@ class Launcher {
                     continue
                 }
                 if (account.meta.type === 'Xbox') {
+                    // Comptes Microsoft : jeton renouvelé au lancement du jeu seulement (rien à
+                    // faire ici, et une panne des serveurs Microsoft ne supprime plus le compte).
                     console.log(`Account Type: ${account.meta.type} | Username: ${account.name}`);
-                    popupRefresh.openPopup({
-                        title: 'Chargement...',
-                        content: `Refresh account Type: ${account.meta.type} | Username: ${account.name}`,
-                        color: 'white',
-                        background: false
-                    });
-
-                    let refresh_accounts = await new Microsoft(this.config.client_id).refresh(account);
-
-                    if (refresh_accounts.error) {
-                        await this.db.deleteData('accounts', account_ID)
-                        if (account_ID == account_selected) {
-                            configClient.account_selected = null
-                            await this.db.updateData('configClient', configClient)
-                        }
-                        console.error(`[Account] ${account.name}: ${refresh_accounts.errorMessage}`);
-                        continue;
-                    }
-
-                    refresh_accounts.ID = account_ID
-                    await this.db.updateData('accounts', refresh_accounts, account_ID)
-                    await addAccount(refresh_accounts)
-                    if (account_ID == account_selected) accountSelect(refresh_accounts)
+                    await addAccount(account)
+                    if (account_ID == account_selected) accountSelect(account)
                 } else if (account.meta.type == 'AZauth') {
                     console.log(`Account Type: ${account.meta.type} | Username: ${account.name}`);
                     popupRefresh.openPopup({

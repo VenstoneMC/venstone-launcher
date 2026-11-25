@@ -766,3 +766,9 @@
     top: 50%;
     transform: translateY(-50%);
 }
+
+.btn-small.disabled,
+.btn-small.disabled:hover {
+    opacity: .6;
+    cursor: default;
+}

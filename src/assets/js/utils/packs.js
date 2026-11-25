@@ -10,7 +10,7 @@
  * Un pack peut être une archive .zip ou un dossier.
  */
 
-import { readZipEntries, parseJson, parseVersion, compare } from './mods.js';
+import { readZipEntries, parseJson, parseVersion, compare, breather } from './mods.js';
 
 const fs = require('fs');
 const path = require('path');
@@ -188,12 +188,17 @@ function readPackFiles(file, names, prefix) {
     return { files, hasRoot, nestedIn, isDir };
 }
 
+/** Métadonnées déjà lues, par pack : { key: taille + date, info } (une entrée par pack). */
 let infoCache = new Map();
 
-/** Clé de cache : chemin + taille + date de modification. */
+/** Version actuelle d'un pack (taille + date), ou null s'il n'existe plus. */
 function cacheKey(file) {
-    let stat = fs.statSync(file);
-    return `${file}|${stat.size}|${stat.mtimeMs}`;
+    try {
+        let stat = fs.statSync(file);
+        return `${stat.size}|${stat.mtimeMs}`;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -202,9 +207,10 @@ function cacheKey(file) {
  * @returns {{name: string, description: string, icon: string|null, range: object|null, invalid?: boolean, nestedIn?: string, error?: string}}
  */
 export function readResourcePack(file) {
-    let key;
-    try { key = 'resource|' + cacheKey(file); } catch { return null; }
-    if (infoCache.has(key)) return infoCache.get(key);
+    let id = `resource|${file}`;
+    let key = cacheKey(file);
+    if (!key) return null;
+    if (infoCache.get(id)?.key === key) return infoCache.get(id).info;
 
     let info = { name: path.basename(file).replace(/\.zip$/i, ''), description: '', icon: null, range: null };
     try {
@@ -223,7 +229,7 @@ export function readResourcePack(file) {
         info.invalid = true;
         info.error = err.message;
     }
-    infoCache.set(key, info);
+    infoCache.set(id, { key, info });
     return info;
 }
 
@@ -234,9 +240,10 @@ export function readResourcePack(file) {
  * @param {string} file Archive .zip ou dossier
  */
 export function readShaderPack(file) {
-    let key;
-    try { key = 'shader|' + cacheKey(file); } catch { return null; }
-    if (infoCache.has(key)) return infoCache.get(key);
+    let id = `shader|${file}`;
+    let key = cacheKey(file);
+    if (!key) return null;
+    if (infoCache.get(id)?.key === key) return infoCache.get(id).info;
 
     let info = { name: path.basename(file).replace(/\.zip$/i, ''), description: '', icon: null };
     try {
@@ -249,7 +256,7 @@ export function readShaderPack(file) {
         info.invalid = true;
         info.error = err.message;
     }
-    infoCache.set(key, info);
+    infoCache.set(id, { key, info });
     return info;
 }
 
@@ -264,15 +271,19 @@ export const PACK_FOLDERS = { resourcepacks: 'resourcepacks', shaderpacks: 'shad
  * @param {string} instanceDir
  * @param {"resourcepacks"|"shaderpacks"} kind
  */
-export function listPacks(instanceDir, kind) {
+export async function listPacks(instanceDir, kind) {
     let dir = `${instanceDir}/${PACK_FOLDERS[kind]}`;
     if (!fs.existsSync(dir)) return [];
     let read = kind === 'shaderpacks' ? readShaderPack : readResourcePack;
-    return fs.readdirSync(dir, { withFileTypes: true })
-        .filter(e => (e.isFile() && /\.zip$/i.test(e.name)) || e.isDirectory())
-        .map(e => ({ file: e.name, path: `${dir}/${e.name}`, folder: e.isDirectory(), info: read(`${dir}/${e.name}`) }))
-        .filter(p => !p.folder || !p.info?.invalid || p.info?.nestedIn) // dossiers sans rapport ignorés
-        .sort((a, b) => a.file.localeCompare(b.file, 'fr', { sensitivity: 'base' }));
+    let breathe = breather();
+    let packs = [];
+    for (let e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (!(e.isFile() && /\.zip$/i.test(e.name)) && !e.isDirectory()) continue;
+        let pack = { file: e.name, path: `${dir}/${e.name}`, folder: e.isDirectory(), info: read(`${dir}/${e.name}`) };
+        if (!pack.folder || !pack.info?.invalid || pack.info?.nestedIn) packs.push(pack); // dossiers sans rapport ignorés
+        await breathe();
+    }
+    return packs.sort((a, b) => a.file.localeCompare(b.file, 'fr', { sensitivity: 'base' }));
 }
 
 /**
@@ -484,32 +495,4 @@ function versionsForFormat(format) {
         last = '1.21.10';
     }
     return { first: RESOURCE_FORMATS[i][0], last };
-}
-
-/* ------------------------------------------------------------------ */
-/* Modrinth                                                            */
-/* ------------------------------------------------------------------ */
-
-/**
- * Page de recherche Modrinth filtrée pour l'instance : version de Minecraft, mod loader (mods)
- * ou chargeur de shaders (Iris pour Iris/Oculus, OptiFine).
- * @param {"mods"|"resourcepacks"|"shaderpacks"} kind
- * @param {object} instance
- * @param {{id: string}|null} [loader] Mod de shaders installé
- * @returns {string}
- */
-export function modrinthSearchUrl(kind, instance, loader = null) {
-    let params = [];
-    let type = instance?.loadder?.loadder_type || 'none';
-    if (kind === 'mods') {
-        // Quilt charge aussi les mods Fabric ; NeoForge 1.20.1 charge les mods Forge.
-        let loaders = { fabric: ['fabric'], quilt: ['quilt', 'fabric'], forge: ['forge'], neoforge: ['neoforge'] }[type] || [];
-        if (type === 'neoforge' && instance.loadder.minecraft_version === '1.20.1') loaders.push('forge');
-        params.push(...loaders.map(l => `g=categories:${l}`));
-    } else if (kind === 'shaderpacks') {
-        params.push(`g=categories:${loader?.id === 'optifine' ? 'optifine' : 'iris'}`);
-    }
-    if (instance?.loadder?.minecraft_version) params.push(`v=${encodeURIComponent(instance.loadder.minecraft_version)}`);
-    let page = { mods: 'mods', resourcepacks: 'resourcepacks', shaderpacks: 'shaders' }[kind];
-    return `https://modrinth.com/discover/${page}${params.length ? `?${params.join('&')}` : ''}`;
 }

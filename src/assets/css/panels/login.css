@@ -5,80 +5,199 @@
     height: 100%;
 }
 
+/* Fenêtre de connexion : même style que les fenêtres du launcher */
 .login-tabs {
-    position: absolute;
-    padding: 15px;
-    background: var(--background);
-    border-radius: 15px;
-    text-align: center;
-    min-width: 40%;
-}
-
-.login-home,
-.login-offline,
-.login-AZauth,
-.login-AZauth-A2F {
     display: none;
-}
-
-.login-offline {
-    border: solid 1px #3b3b3b;
+    position: absolute;
+    width: 470px;
+    box-sizing: border-box;
+    padding: 24px 26px 20px;
+    background: var(--background);
+    border: solid 1px #414141;
+    border-radius: 14px;
+    box-shadow: 0 20px 60px #00000080;
+    text-align: center;
 }
 
 .login-text {
-    font-size: 30px;
+    color: #F1F1F1;
+    font: normal normal bold 24px/32px Poppins;
 }
 
 .login-text-desc {
-    font-size: 15px;
-    font-weight: lighter;
+    margin-top: 4px;
+    color: #a9a9a9;
+    font: normal normal normal 13.5px/20px Poppins;
+}
+
+/* Choix du type de compte */
+.login-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 18px;
+    text-align: left;
+}
+
+.login-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    border-radius: 12px;
+    background: #1f1f1f;
+    border: solid 1px #3b3b3b;
+    cursor: pointer;
+    transition: background .2s, border-color .2s, transform .15s;
+}
+
+.login-card:hover {
+    background: #2379ee1a;
+    border-color: #5aa0ff;
+}
+
+.login-card:active {
+    transform: scale(.99);
+}
+
+.login-card-icon {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    border-radius: 11px;
+    background: #2a2a2a;
+}
+
+.login-card-icon img {
+    width: 28px;
+    height: 28px;
+}
+
+.login-card-title {
+    color: #F1F1F1;
+    font: normal normal bold 15px/20px Poppins;
+}
+
+.login-card-desc {
+    color: #9a9a9a;
+    font: normal normal normal 12.5px/18px Poppins;
+}
+
+/* Boutons */
+.login-options {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.connect,
+.cancel {
+    min-width: 140px;
+    padding: 9px 22px;
+    border-radius: 11px;
+    font: normal normal bold 14px/18px Poppins;
+    cursor: pointer;
+    transition: background-color .3s, border-color .3s;
 }
 
 .connect {
-    background: none;
-    color: var(--color);
+    color: #ffffff;
     background-color: #2379ee;
     border: solid 1px #5aa0ff;
-    border-radius: 13px;
-    padding: 0.4rem 4rem;
-    font-family: Poppins;
-    font-size: 15px;
-    margin-top: 15px;
-    margin-right: 10px;
-    margin-left: 10px;
-    margin-bottom: 5px;
-    transition-duration: 0.4s;
 }
 
 .connect:hover {
     background-color: #0d51ad;
-    border: solid 1px #2e6dc5;
-    cursor: pointer;
-    transition-duration: 0.4s;
+    border-color: #2e6dc5;
 }
 
 .cancel {
-    background: none;
-    color: var(--color);
-    border: solid 4px var(--element-color);
-    border-radius: 10px;
-    padding: 0.3rem 4rem;
-    font-size: inherit;
-    font-weight: bold;
-    margin: 15px 10px;
+    color: #E1E1E1;
+    background-color: #353535;
+    border: solid 1px #4a4a4a;
 }
 
+.cancel:hover {
+    background-color: #414141;
+}
+
+.login-choice .login-options:has(.login-cancel[style*="none"]) {
+    display: none;
+}
+
+/* Champs */
 .input-login .email,
 .input-login .password,
 .A2F {
-    color: var(--color);
-    background: none;
-    border: solid 1px #343434;
-    border-radius: 7px;
-    width: 80%;
-    padding: 0.6rem 1rem;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 16px;
+    padding: 10px 14px;
+    color: #F1F1F1;
+    background: #1f1f1f;
+    border: solid 1px #3b3b3b;
+    border-radius: 10px;
+    font: normal normal normal 15px/20px Poppins;
+    outline: none;
+    transition: border-color .2s;
+}
+
+.input-login .email:focus,
+.input-login .password:focus,
+.A2F:focus {
+    border-color: #2379ee;
+}
+
+.login-error {
     margin-top: 10px;
-    font-size: 16px;
-    background-color: #181818;
-    font-family: Poppins;
+    color: #ff8b8f;
+    font: normal normal normal 12.5px/18px Poppins;
+}
+
+.login-error:empty {
+    display: none;
+}
+
+/* Attente de la connexion Microsoft */
+.login-wait {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 14px;
+}
+
+.login-spinner {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: solid 3px #3b3b3b;
+    border-top-color: #5aa0ff;
+    animation: login-spin .8s linear infinite;
+}
+
+/* Échec : point d'exclamation rouge à la place du chargement, consigne d'attente masquée */
+.login-microsoft:has(.login-error:not(:empty)) .login-spinner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: none;
+    border-color: #ff5c62;
+    background: rgba(255, 92, 98, .12);
+}
+
+.login-microsoft:has(.login-error:not(:empty)) .login-spinner::after {
+    content: '!';
+    color: #ff5c62;
+    font: normal normal bold 20px/1 Poppins;
+}
+
+.login-microsoft:has(.login-error:not(:empty)) .login-microsoft-desc {
+    display: none;
+}
+
+@keyframes login-spin {
+    to { transform: rotate(360deg); }
 }

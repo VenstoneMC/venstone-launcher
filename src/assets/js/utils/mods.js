@@ -395,14 +395,30 @@ function readForgeLike(entries, loader) {
     };
 }
 
+/** Métadonnées déjà lues, par fichier : { key: taille + date, info } (une entrée par fichier). */
 let infoCache = new Map();
+
+/**
+ * Pause régulière pendant un long traitement synchrone : l'interface reste fluide
+ * (une pause toutes les ~12 ms de calcul, soit moins d'une image à 60 i/s).
+ * @returns {() => Promise<void>}
+ */
+export function breather(budget = 12) {
+    let last = performance.now();
+    return async () => {
+        if (performance.now() - last < budget) return;
+        await new Promise(resolve => setTimeout(resolve));
+        last = performance.now();
+    };
+}
 
 /** Métadonnées d'un .jar (ou .jar.disabled). Ne lève jamais : `loader: null` si non reconnu. */
 export function readModInfo(file) {
     let stat;
     try { stat = fs.statSync(file); } catch { return null; }
-    let key = `${file}|${stat.size}|${stat.mtimeMs}`;
-    if (infoCache.has(key)) return infoCache.get(key);
+    let key = `${stat.size}|${stat.mtimeMs}`;
+    let cached = infoCache.get(file);
+    if (cached?.key === key) return cached.info;
 
     let base = path.basename(file).replace(/\.disabled$/i, '');
     let info = { loader: null, id: null, name: base.replace(/\.jar$/i, ''), version: '', icon: null, depends: [], provides: [] };
@@ -429,7 +445,7 @@ export function readModInfo(file) {
     } catch (err) {
         info.error = err.message;
     }
-    infoCache.set(key, info);
+    infoCache.set(file, { key, info });
     return info;
 }
 
@@ -549,17 +565,15 @@ export function modsFolder(instanceDir) {
 }
 
 /** Liste des mods (.jar actifs et .jar.disabled), triés par nom. */
-export function listMods(instanceDir) {
+export async function listMods(instanceDir) {
     let dir = modsFolder(instanceDir);
     if (!fs.existsSync(dir)) return [];
-    let mods = fs.readdirSync(dir)
-        .filter(f => /\.jar$/i.test(f) || /\.jar\.disabled$/i.test(f))
-        .map(file => ({
-            file,
-            path: `${dir}/${file}`,
-            enabled: !/\.disabled$/i.test(file),
-            info: readModInfo(`${dir}/${file}`)
-        }));
+    let breathe = breather();
+    let mods = [];
+    for (let file of fs.readdirSync(dir).filter(f => /\.jar(\.disabled)?$/i.test(f))) {
+        mods.push({ file, path: `${dir}/${file}`, enabled: !/\.disabled$/i.test(file), info: readModInfo(`${dir}/${file}`) });
+        await breathe();
+    }
     return mods.sort((a, b) => String(a.info?.name || a.file).localeCompare(String(b.info?.name || b.file), 'fr', { sensitivity: 'base' }));
 }
 

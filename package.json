@@ -1,7 +1,7 @@
 {
     "name": "venstone-launcher",
     "preductname": "Venstone Launcher",
-    "version": "0.2.3",
+    "version": "0.2.4",
     "description": "https://venstone.xyz",
     "main": "src/app.js",
     "author": "Luuxis, Limeen",
@@ -10,18 +10,21 @@
         "start": "cross-env-shell NODE_ENV=dev electron .",
         "dev": "cross-env-shell DEV_TOOL=open nodemon --exec npm start",
         "build": "node build.js --obf=true --build=platform",
+        "test": "node --test \"tests/*.test.mjs\"",
         "icon": "node build.js --icon=https://venstone.xyz/assets/images/venstone.png"
     },
     "license": "CCANC",
     "nodemonConfig": {
-        "ext": "js,html,css",
+        "ext": "js,mjs,html,css",
         "ignore": [
             "**/test",
+            "tests/**",
             "data/**"
         ]
     },
     "dependencies": {
-        "electron-updater": "^6.1.8",
+        "electron-updater": "^6.8.11",
+        "marked": "^15.0.12",
         "minecraft-java-core": "^4.1.4",
         "node-bdd": "^2.0.4",
         "node-fetch": "^2.7.0",
@@ -29,8 +32,8 @@
     },
     "devDependencies": {
         "cross-env": "^7.0.3",
-        "electron": "^30.5.1",
-        "electron-builder": "^26.0.12",
+        "electron": "^45.5.0",
+        "electron-builder": "^26.18.0",
         "javascript-obfuscator": "^4.1.0",
         "jimp": "^0.22.12",
         "nodemon": "^3.1.2",

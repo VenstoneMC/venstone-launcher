@@ -22,10 +22,10 @@ let current = null;
  * @returns {HTMLElement}
  */
 function element() {
-    let root = document.querySelector('.confirm-dialog');
+    let root = document.querySelector('.confirm-box');
     if (root) return root;
     root = document.createElement('div');
-    root.className = 'confirm-dialog';
+    root.className = 'confirm-dialog confirm-box';
     root.innerHTML = `
         <div class="confirm-dialog-tab">
             <div class="confirm-dialog-head">
@@ -34,6 +34,7 @@ function element() {
             </div>
             <div class="confirm-dialog-text"></div>
             <input type="text" class="field-input confirm-dialog-input" maxlength="32" spellcheck="false"/>
+            <div class="confirm-dialog-status"></div>
             <div class="confirm-dialog-error"></div>
             <label class="checkbox-line confirm-dialog-check">
                 <input type="checkbox"/>
@@ -59,8 +60,9 @@ function element() {
  * @param {boolean} [options.danger] Bouton rouge
  * @param {string} [options.checkbox] Libellé d'une case à cocher optionnelle
  * @param {{value?: string, placeholder?: string}} [options.input] Champ texte (prérempli et sélectionné)
- * @param {(value: string) => Promise<string|null>} [options.onConfirm] Action lancée à la confirmation ;
- *        si elle renvoie un message, il est affiché et la boîte reste ouverte
+ * @param {(value: string, setStatus: (text: string) => void) => Promise<string|null>} [options.onConfirm] Action
+ *        lancée à la confirmation (`setStatus` affiche sa progression) ; si elle renvoie un message,
+ *        il est affiché et la boîte reste ouverte
  * @param {string} [options.busyText] Libellé du bouton pendant `onConfirm`
  * @returns {Promise<{confirmed: boolean, checked: boolean, value: string}>}
  */
@@ -81,6 +83,9 @@ export function confirmDialog({ title, html = '', confirmText = 'Confirmer', can
     root.querySelector('.confirm-dialog-cancel').textContent = cancelText;
     let field = root.querySelector('.confirm-dialog-input');
     let error = root.querySelector('.confirm-dialog-error');
+    let status = root.querySelector('.confirm-dialog-status');
+    let setStatus = text => { status.textContent = text || ''; };
+    setStatus('');
     field.style.display = input ? '' : 'none';
     field.value = input?.value || '';
     field.placeholder = input?.placeholder || '';
@@ -99,11 +104,12 @@ export function confirmDialog({ title, html = '', confirmText = 'Confirmer', can
             ok.textContent = busyText || confirmText;
             let message = null;
             try {
-                message = await onConfirm(field.value.trim());
+                message = await onConfirm(field.value.trim(), setStatus);
             } catch (err) {
                 message = err.message || String(err);
             }
             busy = false;
+            setStatus('');
             ok.classList.remove('disabled');
             ok.textContent = confirmText;
             if (message) error.textContent = message;
@@ -134,8 +140,70 @@ export function confirmDialog({ title, html = '', confirmText = 'Confirmer', can
 /**
  * Liste HTML (échappée) de raisons, pour le contenu d'une boîte de confirmation.
  * @param {string[]} items
+ * @param {boolean} [neutral] Liste informative (sinon en rouge, pour des problèmes)
  * @returns {string}
  */
-export function reasonsList(items) {
-    return `<ul class="confirm-dialog-list">${items.map(i => `<li>${escapeHTML(i)}</li>`).join('')}</ul>`;
+export function reasonsList(items, neutral = false) {
+    return `<ul class="confirm-dialog-list${neutral ? ' neutral' : ''}">${items.map(i => `<li>${escapeHTML(i)}</li>`).join('')}</ul>`;
+}
+
+/**
+ * Boîte de choix entre plusieurs options (grandes cartes cliquables).
+ *
+ *   let choice = await choiceDialog({ title: 'Importer un modpack', choices: [
+ *       { id: 'file', title: 'Depuis un fichier', description: '...', icon: '<svg...>' }, ...
+ *   ] })   // id choisi, ou null si annulé
+ *
+ * @param {object} options
+ * @param {string} options.title
+ * @param {string} [options.html] Texte (HTML déjà échappé)
+ * @param {Array<{id: string, title: string, description?: string, icon?: string, disabled?: boolean}>} options.choices
+ * @returns {Promise<string|null>}
+ */
+export function choiceDialog({ title, html = '', choices }) {
+    if (current) current(false);
+    let root = document.querySelector('.choice-dialog');
+    if (!root) {
+        root = document.createElement('div');
+        root.className = 'confirm-dialog choice-dialog';
+        document.querySelector('.panels').appendChild(root);
+    }
+    root.innerHTML = `
+        <div class="confirm-dialog-tab">
+            <div class="confirm-dialog-head">
+                <p class="modal-title confirm-dialog-title">${escapeHTML(title)}</p>
+            </div>
+            ${html ? `<div class="confirm-dialog-text">${html}</div>` : ''}
+            <div class="choice-list">${choices.map(c => `
+                <div class="choice-option${c.disabled ? ' disabled' : ''}" data-id="${escapeHTML(c.id)}">
+                    <div class="choice-icon">${c.icon || ''}</div>
+                    <div class="choice-body">
+                        <div class="choice-title">${escapeHTML(c.title)}</div>
+                        ${c.description ? `<div class="choice-desc">${escapeHTML(c.description)}</div>` : ''}
+                    </div>
+                </div>`).join('')}
+            </div>
+            <div class="confirm-dialog-buttons">
+                <div class="btn btn-secondary choice-cancel">Annuler</div>
+            </div>
+        </div>`;
+    root.style.display = 'flex';
+
+    return new Promise(resolve => {
+        let done = id => {
+            current = null;
+            root.style.display = 'none';
+            document.removeEventListener('keydown', onKey, true);
+            resolve(id);
+        };
+        let onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); done(null); } };
+        current = () => done(null);
+        root.onmousedown = e => { if (e.target === root) done(null); };
+        root.onclick = e => {
+            if (e.target.closest('.choice-cancel')) return done(null);
+            let option = e.target.closest('.choice-option:not(.disabled)');
+            if (option) done(option.dataset.id);
+        };
+        document.addEventListener('keydown', onKey, true);
+    });
 }

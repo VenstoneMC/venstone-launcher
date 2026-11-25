@@ -17,15 +17,18 @@ class Splash {
         this.splashAuthor = document.querySelector(".splash-author");
         this.message = document.querySelector(".message");
         this.progress = document.querySelector(".progress");
-        document.addEventListener('DOMContentLoaded', async () => {
-            let databaseLauncher = new database();
-            let configClient = await databaseLauncher.readData('configClient');
-            let theme = configClient?.launcher_config?.theme || "auto"
-            let isDarkTheme = await ipcRenderer.invoke('is-dark-theme', theme).then(res => res)
-            document.body.className = isDarkTheme ? 'dark global' : 'light global';
-            if (process.platform == 'win32') ipcRenderer.send('update-window-progress-load')
-            this.startAnimation()
-        });
+        this.start();
+    }
+
+    /** Thème, barre des tâches puis animation (le preload attend que le HTML soit analysé). */
+    async start() {
+        let databaseLauncher = new database();
+        let configClient = await databaseLauncher.readData('configClient');
+        let theme = configClient?.launcher_config?.theme || "auto"
+        let isDarkTheme = await ipcRenderer.invoke('is-dark-theme', theme).then(res => res)
+        document.body.className = isDarkTheme ? 'dark global' : 'light global';
+        if (process.platform == 'win32') ipcRenderer.send('update-window-progress-load')
+        this.startAnimation()
     }
 
     /** Joue l'animation du splash puis lance la recherche de mise à jour. */

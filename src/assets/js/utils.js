@@ -3,7 +3,7 @@
  * Luuxis License v1.0 (voir fichier LICENSE pour les détails en FR/EN)
  */
 
-const { ipcRenderer } = require('electron')
+const { ipcRenderer, webUtils } = require('electron')
 const { Status } = require('minecraft-java-core')
 const fs = require('fs');
 const crypto = require('crypto');
@@ -15,6 +15,7 @@ import logger from './utils/logger.js';
 import popup from './utils/popup.js';
 import { skin2D } from './utils/skin.js';
 import slider from './utils/slider.js';
+import { accountLabel, loadHead } from './utils/accounts.js';
 
 /**
  * Applique le thème et choisit un fond d'écran aléatoire.
@@ -73,27 +74,23 @@ async function appdata() {
  * Ajoute la carte d'un compte dans la liste des paramètres.
  * @param {object} data Compte (name, ID, meta...)
  */
-/** Adresse de la tête d'un joueur sur le site (Steve si le joueur n'a pas de skin). */
-function headUrl(pseudo) {
-    return `https://venstone.xyz/api/skin/${encodeURIComponent(pseudo)}/head.png`;
-}
-
 async function addAccount(data) {
     let div = document.createElement("div");
     div.classList.add("account");
     div.id = data.ID;
     let name = String(data.name).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-    let type = data?.meta?.type === 'Xbox' ? 'Compte Microsoft' : 'Compte Venstone';
     div.innerHTML = `
-        <div class="profile-image" style="background-image: url(${headUrl(data.name)}), url(assets/images/default/steve.png);"></div>
+        <div class="profile-image"></div>
         <div class="profile-infos">
             <div class="profile-pseudo">${name}</div>
-            <div class="profile-uuid"><span class="profile-active">Actif</span>${type}</div>
+            <div class="profile-uuid"><span class="profile-active">Actif</span>${accountLabel(data)}</div>
         </div>
         <div class="delete-profile" id="${data.ID}" title="Supprimer ce compte">
             <svg viewBox="0 0 24 24"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 11a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1z"/></svg>
         </div>
     `
+    let image = div.querySelector('.profile-image');
+    loadHead(data, url => image.style.backgroundImage = `url("${url}")`);
     return document.querySelector('.accounts-list').appendChild(div);
 }
 
@@ -106,40 +103,16 @@ async function accountSelect(data) {
     if (!data) return;
     let account = document.getElementById(`${data.ID}`);
     let activeAccount = document.querySelector('.account-select')
-    headplayer(`${data.name}`);
 
     if (activeAccount) activeAccount.classList.remove('account-select');
     if (account) account.classList.add('account-select');
+
+    // Tête en cache tout de suite (hors-ligne compris), puis à jour si possible.
+    let head = document.querySelector(".player-head");
+    loadHead(data, url => head.style.backgroundImage = `url("${url}")`);
+    document.getElementById("player-username").textContent = `${data.name}`;
     window.dispatchEvent(new CustomEvent('venstone:account-changed'));
 }
-
-// async function headplayer(skinBase64) {
-//     let skin = await new skin2D().creatHeadTexture(skinBase64);
-//     document.querySelector(".player-head").style.backgroundImage = `url(${skin})`;
-// }
-
- /**
-  * Affiche la tête du skin et le pseudo dans la barre du bas (Steve si le skin est introuvable).
-  * @param {string} pseudo
-  */
- function headplayer(pseudo) {
-    const imageUrl = headUrl(pseudo);
-    const defaultImage = "assets/images/default/steve.png";
-
-    const img = new Image();
-    img.onload = function () {
-        // L'image s'est chargée correctement
-        document.querySelector(".player-head").style.backgroundImage = `url(${imageUrl})`;
-    };
-    img.onerror = function () {
-        // L'image n'a pas pu être chargée
-        document.querySelector(".player-head").style.backgroundImage = `url(${defaultImage})`;
-    };
-    img.src = imageUrl;
-
-    document.getElementById("player-username").textContent = `${pseudo}`;
-}
-
 
 /**
  * Compte hors-ligne (crack) avec un UUID stable, identique à celui que calcule un
@@ -196,9 +169,22 @@ async function setStatus(opt, offline = false) {
     }
 }
 
+/**
+ * Chemin sur le disque d'un fichier choisi ou glissé (`File.path` n'existe plus depuis Electron 32).
+ * @param {File} file
+ * @returns {string|null}
+ */
+function filePath(file) {
+    try {
+        return webUtils.getPathForFile(file) || null;
+    } catch {
+        return null;
+    }
+}
 
 export {
     appdata as appdata,
+    filePath as filePath,
     changePanel as changePanel,
     config as config,
     database as database,
