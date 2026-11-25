@@ -1,6 +1,6 @@
 /**
- * Protections communes aux fenêtres du launcher (pas à la fenêtre de connexion Microsoft,
- * qui doit pouvoir naviguer vers login.live.com).
+ * Protections communes aux fenêtres du launcher. La connexion Microsoft se fait dans le
+ * navigateur par défaut (src/main/microsoft.js), aucune fenêtre n'a besoin de naviguer.
  */
 
 const { shell } = require("electron");

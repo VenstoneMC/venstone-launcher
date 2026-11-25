@@ -6,13 +6,16 @@
  *    dépendances requises, signale les conflits, puis passe par l'import habituel de l'éditeur
  *    (mêmes vérifications que pour un fichier ajouté à la main).
  *  - Modpacks : le .mrpack choisi est téléchargé puis importé dans une nouvelle instance.
+ *  - Chaque projet a un aperçu de sa galerie dans le panneau de droite, et une page complète
+ *    (description et galerie) qui prend la place des résultats ; les images s'ouvrent en grand.
  */
 
 import { escapeHTML, initials, loaderLabel } from '../utils/instanceForm.js'
 import { confirmDialog, reasonsList } from '../utils/dialog.js'
 import { getMinecraftVersions } from '../utils/instances.js'
+import { renderMarkdown } from '../utils/markdown.js'
 import {
-    search, projectVersions, identify, resolveDependencies, downloadVersion, tempFolder, bestVersion,
+    search, getProjects, projectVersions, identify, resolveDependencies, downloadVersion, tempFolder, bestVersion,
     contentLoaders, compactNumber, relativeDate, FABRIC_API_ID
 } from '../utils/modrinth.js'
 
@@ -25,6 +28,9 @@ const ICON_DOWNLOAD = '<svg viewBox="0 0 24 24"><path d="M11 3h2v9.2l3.3-3.3 1.4
 const ICON_HEART = '<svg viewBox="0 0 24 24"><path d="M12 21 10.6 19.7C5.4 15 2 11.9 2 8.2 2 5.1 4.4 3 7.3 3c1.7 0 3.4.8 4.7 2.1C13.3 3.8 15 3 16.7 3 19.6 3 22 5.1 22 8.2c0 3.7-3.4 6.8-8.6 11.5z"/></svg>'
 const ICON_CLOCK = '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm1 5h-2v6l5 3 1-1.7-4-2.3z"/></svg>'
 const ICON_CHECK = '<svg viewBox="0 0 24 24"><path d="M9.5 16.2 5.3 12l-1.4 1.4 5.6 5.6L20.1 8.4 18.7 7z"/></svg>'
+const ICON_PAGE = '<svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.5V8h4.5zM7 12v2h10v-2zm0 4v2h7v-2z"/></svg>'
+const ICON_PREV = '<svg viewBox="0 0 24 24"><path d="M15.4 5.4 14 4l-8 8 8 8 1.4-1.4L8.8 12z"/></svg>'
+const ICON_NEXT = '<svg viewBox="0 0 24 24"><path d="M8.6 5.4 10 4l8 8-8 8-1.4-1.4 6.6-6.6z"/></svg>'
 const ICON_EXTERNAL = '<svg viewBox="0 0 24 24"><path d="M14 3h7v7h-2V6.4l-9.3 9.3-1.4-1.4L17.6 5H14zM5 5h6v2H6v11h11v-5h2v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>'
 
 /** Textes propres à chaque type de contenu. */
@@ -50,6 +56,15 @@ export default class ModrinthBrowser {
         this.selected = null
         this.installed = new Map()
         this.busy = new Set()
+        /** Projet complet du projet sélectionné (description, galerie), chargé à la sélection. */
+        this.project = null
+        this.projectError = false
+        /** Page complète affichée à la place des résultats. */
+        this.pageOpen = false
+        this.pageTab = 'description'
+        this.resultsScroll = 0
+        /** Image affichée en grand (-1 : aucune). */
+        this.lightboxIndex = -1
         this.bind()
     }
 
@@ -111,6 +126,11 @@ export default class ModrinthBrowser {
             if (e.target.closest('.browse-quick')) return this.install(hit)
             this.select(hit)
         })
+        results.addEventListener('dblclick', e => {
+            let card = e.target.closest('.browse-card')
+            let hit = card && this.hits.find(h => h.project_id === card.dataset.id)
+            if (hit && !e.target.closest('.browse-quick')) this.openPage()
+        })
 
         let detail = this.q('.browse-detail')
         detail.addEventListener('change', e => {
@@ -121,11 +141,60 @@ export default class ModrinthBrowser {
                 let version = this.detailVersions?.find(v => v.id === this.q('.browse-detail-version')?.value)
                 this.install(this.selected, version)
             }
-            if (e.target.closest('.browse-detail-link') && this.selected) {
-                let type = { mods: 'mod', resourcepacks: 'resourcepack', shaderpacks: 'shader', modpacks: 'modpack' }[this.kind]
-                shell.openExternal(`https://modrinth.com/${type}/${this.selected.slug}`)
+            if (e.target.closest('.browse-detail-link') && this.selected) shell.openExternal(this.projectUrl())
+            if (e.target.closest('.browse-detail-open')) this.openPage()
+            let thumb = e.target.closest('.browse-thumb')
+            if (thumb) this.openLightbox(Number(thumb.dataset.index))
+        })
+
+        let page = this.q('.browse-page')
+        page.addEventListener('click', e => {
+            if (e.target.closest('.browse-page-back')) return this.closePage()
+            let tab = e.target.closest('.browse-page-tab')
+            if (tab) return this.switchPageTab(tab.dataset.tab)
+            let thumb = e.target.closest('.browse-thumb')
+            if (thumb) return this.openLightbox(Number(thumb.dataset.index))
+            let link = e.target.closest('a[href], [data-url]')
+            if (link) {
+                // Liens de la description et du projet : toujours dans le navigateur.
+                e.preventDefault()
+                let url = link.dataset.url || link.getAttribute('href')
+                if (/^(https?|mailto):/i.test(url)) shell.openExternal(url)
             }
         })
+
+        let lightbox = this.q('.browse-lightbox')
+        lightbox.addEventListener('click', e => {
+            if (e.target.closest('.browse-lightbox-prev')) return this.stepLightbox(-1)
+            if (e.target.closest('.browse-lightbox-next')) return this.stepLightbox(1)
+            if (e.target.closest('.browse-lightbox-original')) {
+                let image = this.gallery[this.lightboxIndex]
+                let url = image?.raw_url || image?.url || ''
+                if (/^https:\/\//i.test(url)) shell.openExternal(url)
+                return
+            }
+            if (e.target.closest('.browse-lightbox-close') || !e.target.closest('.browse-lightbox-frame img, .browse-lightbox-caption')) this.closeLightbox()
+        })
+        document.addEventListener('keydown', e => {
+            if (this.lightboxIndex < 0 || !this.root.classList.contains('open')) return
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                e.preventDefault()
+                this.stepLightbox(e.key === 'ArrowLeft' ? -1 : 1)
+            }
+        })
+    }
+
+    /** Adresse du projet sur modrinth.com. */
+    projectUrl() {
+        let type = { mods: 'mod', resourcepacks: 'resourcepack', shaderpacks: 'shader', modpacks: 'modpack' }[this.kind]
+        return `https://modrinth.com/${type}/${this.selected.slug}`
+    }
+
+    /** Échap : ferme l'image en grand, puis la page du projet, puis la fenêtre. */
+    escape() {
+        if (this.lightboxIndex >= 0) this.closeLightbox()
+        else if (this.pageOpen) this.closePage()
+        else this.close()
     }
 
     /**
@@ -151,6 +220,8 @@ export default class ModrinthBrowser {
 
     close() {
         this.seq++
+        this.closeLightbox()
+        this.closePage({ restore: false })
         this.home.closePopup('.browse-popup')
     }
 
@@ -158,6 +229,9 @@ export default class ModrinthBrowser {
     switchKind(kind) {
         this.kind = kind
         this.selected = null
+        this.project = null
+        this.closeLightbox()
+        this.closePage({ restore: false })
         this.q('.browse-search').value = ''
         this.root.querySelectorAll('.browse-kinds .edit-tab-btn').forEach(t => t.classList.toggle('active', t.dataset.kind === kind))
         this.q('.browse-search').placeholder = KIND_TEXT[kind].search
@@ -208,6 +282,7 @@ export default class ModrinthBrowser {
     /** Nouvelle recherche (première page). */
     async search() {
         let seq = ++this.seq
+        this.closePage({ restore: false })
         this.hits = []
         this.total = 0
         this.error = null
@@ -328,11 +403,14 @@ export default class ModrinthBrowser {
 
     /** Sélectionne un projet : détails et versions compatibles. */
     async select(hit) {
+        if (this.selected === hit) return
         this.selected = hit
         this.detailVersions = null
         this.detailError = null
+        this.loadProject(hit)
         this.renderResults()
         this.renderDetail()
+        if (this.pageOpen) this.renderPage()
         try {
             let { loaders, gameVersion } = this.filter
             let versions = await projectVersions(hit.project_id, { loaders, gameVersions: gameVersion ? [gameVersion] : [] })
@@ -379,6 +457,7 @@ export default class ModrinthBrowser {
                         <div class="browse-detail-author">par ${escapeHTML(hit.author)}</div>
                     </div>
                 </div>
+                <div class="browse-gallery-preview"></div>
                 <div class="browse-detail-desc">${escapeHTML(hit.description)}</div>
                 <div class="browse-chips">${(hit.display_categories || hit.categories || []).slice(0, 6).map(c => `<span>${escapeHTML(c)}</span>`).join('')}</div>
                 <div class="browse-card-meta">
@@ -392,9 +471,183 @@ export default class ModrinthBrowser {
                 <label class="field-label">Version</label>
                 ${versionField}
                 <div class="btn btn-primary browse-detail-install${canInstall ? '' : ' disabled'}">${busy ? 'Installation...' : (installed ? 'Installer cette version' : 'Installer')}</div>
-                <a class="browse-detail-link">${ICON_EXTERNAL} Voir sur Modrinth</a>
+                <div class="browse-detail-links">
+                    <a class="browse-detail-open">${ICON_PAGE} Page du projet</a>
+                    <a class="browse-detail-link" title="Ouvrir dans le navigateur">${ICON_EXTERNAL} Modrinth</a>
+                </div>
             </div>`
+        this.renderGalleryPreview()
         this.renderDependencies()
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Page du projet et galerie                                           */
+    /* ------------------------------------------------------------------ */
+
+    /** Charge le projet complet (description, galerie, liens), mis en cache par modrinth.js. */
+    async loadProject(hit) {
+        this.project = null
+        this.projectError = false
+        try {
+            let project = (await getProjects([hit.project_id])).get(hit.project_id)
+            if (this.selected !== hit) return
+            this.project = project || null
+            this.projectError = !project
+        } catch (err) {
+            if (this.selected !== hit) return
+            console.warn('[Modrinth] projet indisponible :', err.message)
+            this.projectError = true
+        }
+        this.renderGalleryPreview()
+        if (this.pageOpen) this.renderPage()
+    }
+
+    /** Images de la galerie, mises en avant d'abord. */
+    get gallery() {
+        return [...(this.project?.gallery || [])]
+            .sort((a, b) => (b.featured - a.featured) || (a.ordering - b.ordering))
+    }
+
+    thumbHTML(image, index, extra = '') {
+        let title = image.title ? ` title="${escapeHTML(image.title)}"` : ''
+        return `<div class="browse-thumb" data-index="${index}"${title}>
+            <img src="${escapeHTML(image.url)}" alt="" loading="lazy" draggable="false"/>${extra}</div>`
+    }
+
+    /** Aperçu de la galerie dans le panneau de droite (3 images au plus). */
+    renderGalleryPreview() {
+        let box = this.q('.browse-gallery-preview')
+        if (!box) return
+        let gallery = this.gallery
+        if (!gallery.length) {
+            box.innerHTML = ''
+            return
+        }
+        let shown = gallery.slice(0, 3)
+        let more = gallery.length - shown.length
+        box.innerHTML = shown.map((image, i) =>
+            this.thumbHTML(image, i, i === shown.length - 1 && more > 0 ? `<span class="browse-thumb-more">+${more}</span>` : '')).join('')
+    }
+
+    /** Affiche la page complète du projet sélectionné à la place des résultats. */
+    openPage() {
+        if (!this.selected) return
+        if (!this.pageOpen) {
+            this.resultsScroll = this.q('.browse-results').scrollTop
+            this.pageOpen = true
+            this.pageTab = 'description'
+            this.q('.browse-results').classList.add('hidden')
+            this.q('.browse-page').classList.remove('hidden')
+            this.q('.browse-tab').classList.add('page-open')
+        }
+        this.renderPage()
+    }
+
+    /**
+     * Revient aux résultats.
+     * @param {{restore?: boolean}} [options] restore : retrouver la position dans la liste
+     */
+    closePage({ restore = true } = {}) {
+        if (!this.pageOpen) return
+        this.pageOpen = false
+        this.q('.browse-page').classList.add('hidden')
+        this.q('.browse-page').innerHTML = ''
+        this.q('.browse-results').classList.remove('hidden')
+        this.q('.browse-tab').classList.remove('page-open')
+        if (restore) this.q('.browse-results').scrollTop = this.resultsScroll
+    }
+
+    switchPageTab(tab) {
+        if (tab === this.pageTab) return
+        this.pageTab = tab
+        this.renderPage()
+        this.q('.browse-page-content').scrollTop = 0
+    }
+
+    renderPage() {
+        let page = this.q('.browse-page')
+        let hit = this.selected
+        let project = this.project
+        let gallery = this.gallery
+        if (this.pageTab === 'gallery' && project && !gallery.length) this.pageTab = 'description'
+
+        let links = project ? [
+            ['Code source', project.source_url],
+            ['Wiki', project.wiki_url],
+            ['Discord', project.discord_url],
+            ['Signaler un problème', project.issues_url]
+        ].filter(([, url]) => url) : []
+
+        let content
+        if (!project && !this.projectError) content = '<div class="browse-loading"><span class="browse-spinner"></span> Chargement de la page...</div>'
+        else if (!project) content = `<div class="mods-empty"><b>Page indisponible</b>Modrinth ne répond pas pour le moment.<div class="browse-retry browse-page-link" data-url="${escapeHTML(this.projectUrl())}">Voir sur Modrinth</div></div>`
+        else if (this.pageTab === 'gallery') content = `<div class="browse-gallery-grid">${gallery.map((image, i) => `
+            <figure>
+                ${this.thumbHTML(image, i)}
+                ${image.title ? `<figcaption>${escapeHTML(image.title)}</figcaption>` : ''}
+            </figure>`).join('')}</div>`
+        else content = `<div class="browse-markdown">${renderMarkdown(project.body) || `<p>${escapeHTML(hit.description)}</p>`}</div>`
+
+        page.innerHTML = `
+            <div class="browse-page-head">
+                <div class="modal-back browse-page-back" title="Retour aux résultats"><div class="icon-arrow"></div></div>
+                ${this.iconHTML(hit, 'browse-card-icon')}
+                <div class="browse-page-heading">
+                    <div class="browse-card-title">${escapeHTML(hit.title)} <span>par ${escapeHTML(hit.author)}</span></div>
+                    <div class="browse-card-desc">${escapeHTML(hit.description)}</div>
+                </div>
+            </div>
+            <div class="browse-page-bar">
+                <div class="browse-page-tab${this.pageTab === 'description' ? ' active' : ''}" data-tab="description">Description</div>
+                ${gallery.length ? `<div class="browse-page-tab${this.pageTab === 'gallery' ? ' active' : ''}" data-tab="gallery">Galerie <span>${gallery.length}</span></div>` : ''}
+                <div class="browse-page-links">${links.map(([label, url]) =>
+                    `<a class="browse-page-link" data-url="${escapeHTML(url)}">${escapeHTML(label)}</a>`).join('')}</div>
+            </div>
+            <div class="browse-page-content">${content}</div>`
+    }
+
+    /** Ouvre une image de la galerie en grand. */
+    openLightbox(index) {
+        if (!this.gallery[index]) return
+        this.lightboxIndex = index
+        this.q('.browse-lightbox').classList.remove('hidden')
+        this.renderLightbox()
+    }
+
+    stepLightbox(step) {
+        let count = this.gallery.length
+        if (count < 2) return
+        this.lightboxIndex = (this.lightboxIndex + step + count) % count
+        this.renderLightbox()
+    }
+
+    closeLightbox() {
+        if (this.lightboxIndex < 0) return
+        this.lightboxIndex = -1
+        let box = this.q('.browse-lightbox')
+        box.classList.add('hidden')
+        box.innerHTML = ''
+    }
+
+    renderLightbox() {
+        let gallery = this.gallery
+        let image = gallery[this.lightboxIndex]
+        let several = gallery.length > 1
+        this.q('.browse-lightbox').innerHTML = `
+            <div class="close-popup browse-lightbox-close icon-close" title="Fermer"></div>
+            ${several ? `<div class="browse-lightbox-nav browse-lightbox-prev" title="Image précédente">${ICON_PREV}</div>` : ''}
+            <div class="browse-lightbox-frame"><img src="${escapeHTML(image.raw_url || image.url)}" alt="" draggable="false"/></div>
+            ${several ? `<div class="browse-lightbox-nav browse-lightbox-next" title="Image suivante">${ICON_NEXT}</div>` : ''}
+            <div class="browse-lightbox-caption">
+                <div>
+                    ${image.title ? `<b>${escapeHTML(image.title)}</b>` : ''}
+                    ${image.description ? `<span>${escapeHTML(image.description)}</span>` : ''}
+                </div>
+                <div class="browse-lightbox-info">
+                    ${several ? `${this.lightboxIndex + 1} / ${gallery.length}` : ''}
+                    <a class="browse-lightbox-original" title="Ouvrir l'image dans le navigateur">${ICON_EXTERNAL} Original</a>
+                </div>
+            </div>`
     }
 
     /** Aperçu des dépendances de la version choisie (mods uniquement). */

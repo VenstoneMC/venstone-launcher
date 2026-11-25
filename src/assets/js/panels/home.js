@@ -612,7 +612,7 @@ class Home {
     bindEscape() {
         let closers = {
             'export-popup': () => this.editor.exporter.close(),
-            'browse-popup': () => this.browser.close(),
+            'browse-popup': () => this.browser.escape(),
             'edit-popup': () => this.editor.close()
         }
         document.addEventListener('keydown', e => {
