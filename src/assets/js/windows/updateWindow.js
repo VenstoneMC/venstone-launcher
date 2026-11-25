@@ -5,6 +5,7 @@
 
 "use strict";
 const { app, BrowserWindow, Menu } = require("electron");
+const { secureWindow } = require("./security.js");
 const path = require("path");
 const os = require("os");
 let dev = process.env.DEV_TOOL === 'open';
@@ -34,12 +35,16 @@ function createWindow() {
         frame: false,
         show: false,
         webPreferences: {
-            contextIsolation: false,
-            nodeIntegration: true
+            // Code du launcher dans le preload, page sans accès à Node.js (voir preload.mjs).
+            preload: path.join(app.getAppPath(), 'src/preload.mjs'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false
         },
     });
     Menu.setApplicationMenu(null);
     updateWindow.setMenuBarVisibility(false);
+    secureWindow(updateWindow);
     updateWindow.loadFile(path.join(`${app.getAppPath()}/src/index.html`));
     updateWindow.once('ready-to-show', () => {
         if (updateWindow) {

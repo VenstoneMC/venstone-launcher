@@ -4,7 +4,7 @@
  */
 
 const { app, ipcMain, nativeTheme, dialog, BrowserWindow } = require('electron');
-const { Microsoft } = require('minecraft-java-core');
+const microsoft = require('./main/microsoft.js');
 const { autoUpdater } = require('electron-updater')
 
 const path = require('path');
@@ -62,9 +62,10 @@ ipcMain.on('main-window-maximize', () => {
 ipcMain.on('main-window-hide', () => MainWindow.getWindow().hide())
 ipcMain.on('main-window-show', () => MainWindow.getWindow().show())
 
-ipcMain.handle('Microsoft-window', async (_, client_id) => {
-    return await new Microsoft(client_id).getAuth();
-})
+// Comptes Microsoft : connexion dans le navigateur, jetons chiffrés (voir main/microsoft.js).
+ipcMain.handle('microsoft-login', microsoft.handler(clientId => microsoft.login(clientId)))
+ipcMain.handle('microsoft-session', microsoft.handler((clientId, account, options) => microsoft.session(clientId, account, options)))
+ipcMain.on('microsoft-cancel', () => microsoft.cancel())
 
 ipcMain.handle('is-dark-theme', (_, theme) => {
     if (theme === 'dark') return true

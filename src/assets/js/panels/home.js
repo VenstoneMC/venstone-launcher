@@ -2,17 +2,19 @@
  * @author Luuxis
  * Luuxis License v1.0 (voir fichier LICENSE pour les détails en FR/EN)
  */
-import { config, database, logger, changePanel, setStatus, pkg, popup } from '../utils.js'
+import { config, database, logger, changePanel, setStatus, pkg, popup, filePath, offlineAccount } from '../utils.js'
 import OfflineLaunch from '../utils/launch.js'
 import { prepareSharedData, finishSharedData } from '../utils/shared.js'
 import {
     INSTANCE_COLORS, getGamePath, getAllInstances, resolveInstanceSelection, isInstalled,
     launchCacheFile, instanceFolder, validateName, sanitizeName, createLocalInstance, cloneOfficialInstance, createInstanceFromModpack,
-    ensureFabricApi, hasInternet
+    ensureFabricApi, hasInternet, recordPlaySession, getPlayStats, formatPlayTime
 } from '../utils/instances.js'
+import { GameOutput, findCrashReport, analyzeCrash, JVM_START_FAILED } from '../utils/crash.js'
 import { readModpack, formatSize } from '../utils/mrpack.js'
 import { readZipEntry } from '../utils/zip.js'
 import { identify, getProjects } from '../utils/modrinth.js'
+import { isMicrosoft, skinPage, microsoftError } from '../utils/accounts.js'
 import InstanceForm, { escapeHTML, loaderLabel, paintIcon, loadIconImage } from '../utils/instanceForm.js'
 import InstanceEditor from './instanceEditor.js'
 import ModrinthBrowser from './modrinthBrowser.js'
@@ -117,6 +119,15 @@ class LaunchProgress {
     }
 }
 
+/**
+ * Arguments saisis par le joueur : séparés par des espaces, guillemets acceptés.
+ * @param {string} [text]
+ * @returns {string[]}
+ */
+function splitArgs(text) {
+    return (String(text || '').match(/"[^"]*"|\S+/g) || []).map(arg => arg.replace(/^"(.*)"$/, '$1'))
+}
+
 class Home {
     static id = "home";
     /**
@@ -141,6 +152,7 @@ class Home {
         this.bindCreateUI()
         this.editor = new InstanceEditor(this)
         this.browser = new ModrinthBrowser(this)
+        this.bindEscape()
         // Un fichier lâché hors d'une zone prévue ne doit pas ouvrir le fichier dans la fenêtre.
         document.addEventListener('dragover', e => e.preventDefault())
         document.addEventListener('drop', e => e.preventDefault())
@@ -266,11 +278,10 @@ class Home {
                 if (item) this.showOldNews(Number(item.dataset.index))
             })
             this.watchNewsFade(popup.querySelector('.news-reader-body'))
-            // Échap ferme, flèches haut / bas changent de news.
+            // Flèches haut / bas : news précédente / suivante (Échap : voir bindEscape).
             document.addEventListener('keydown', e => {
                 if (!popup.classList.contains('open')) return
-                if (e.key === 'Escape') this.closeNewsHistory()
-                else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                     e.preventDefault()
                     let count = (this.newsItems || []).length - 1
                     let next = this.newsHistoryIndex + (e.key === 'ArrowDown' ? 1 : -1)
@@ -327,10 +338,11 @@ class Home {
         body.scrollTop = 0
     }
 
-    /** Clic sur la tête du joueur : ouvre la page de changement de skin. */
+    /** Clic sur la tête du joueur : page de changement de skin (Venstone ou minecraft.net). */
     socialLick() {
-        document.querySelector('.player-head').addEventListener('click', () => {
-            shell.openExternal('https://venstone.xyz/skin/')
+        document.querySelector('.player-head').addEventListener('click', async () => {
+            let { auth } = await this.currentAuth()
+            shell.openExternal(skinPage(auth))
         })
     }
 
@@ -356,6 +368,7 @@ class Home {
     async refreshInstances() {
         let { configClient, auth } = await this.currentAuth()
         this.instances = await getAllInstances(auth)
+        this.playStats = await getPlayStats()
 
         let selected = await resolveInstanceSelection(configClient, auth)
         if (configClient && configClient.instance_selct !== selected) {
@@ -489,6 +502,8 @@ class Home {
         let card = document.createElement('div')
         card.className = `instance-card${instance.name === selected ? ' active-instance' : ''}${unavailable ? ' unavailable' : ''}`
         card.dataset.name = instance.name
+        let stats = this.playStats?.[instance.name]
+        if (stats?.playTime) card.title = `${formatPlayTime(stats.playTime)} de jeu, dernière partie le ${new Date(stats.lastPlayed).toLocaleDateString('fr-FR')}`
 
         let state = ''
         if (instance.name === selected) state = `<div class="instance-card-state selected">${ICON_CHECK}</div>`
@@ -591,6 +606,26 @@ class Home {
     }
 
     /**
+     * Échap ferme la fenêtre du dessus (les boîtes de confirmation gèrent Échap elles-mêmes).
+     * Chaque fenêtre garde sa propre fermeture (export en cours, recherche Modrinth...).
+     */
+    bindEscape() {
+        let closers = {
+            'export-popup': () => this.editor.exporter.close(),
+            'browse-popup': () => this.browser.close(),
+            'edit-popup': () => this.editor.close()
+        }
+        document.addEventListener('keydown', e => {
+            if (e.key !== 'Escape') return
+            let top = [...document.querySelectorAll('.modal-overlay.open')].pop()
+            if (!top) return
+            let type = [...top.classList].find(c => c.endsWith('-popup'))
+            if (closers[type]) closers[type]()
+            else this.closePopup(`.${type}`)
+        })
+    }
+
+    /**
      * Ouvre une fenêtre modale avec son animation.
      * @param {string} selector
      */
@@ -663,11 +698,11 @@ class Home {
 
         let modpackInput = document.querySelector('.import-modpack-file')
         modpackInput.addEventListener('change', () => {
-            let file = modpackInput.files[0]?.path
+            let file = modpackInput.files[0] && filePath(modpackInput.files[0])
             if (file) this.importModpack(file)
         })
         instancePopup.addEventListener('drop', e => {
-            let file = [...(e.dataTransfer?.files || [])].map(f => f.path).find(f => /\.(mrpack|zip)$/i.test(f || ''))
+            let file = [...(e.dataTransfer?.files || [])].map(filePath).find(f => /\.(mrpack|zip)$/i.test(f || ''))
             if (file) this.importModpack(file)
         })
 
@@ -677,10 +712,12 @@ class Home {
      * Importe un modpack .mrpack dans une nouvelle instance personnelle : résumé, choix du nom,
      * puis téléchargement des fichiers (progression affichée dans la boîte).
      * @param {string} file .mrpack (ou .zip au même format)
-     * @param {{iconUrl?: string, title?: string}} [options] Icône et nom du projet Modrinth, s'ils sont déjà connus
+     * @param {{iconUrl?: string, title?: string, projectId?: string, versionId?: string}} [known] Projet
+     *        Modrinth, s'il est déjà connu (installation depuis la navigation Modrinth)
      * @returns {Promise<boolean>} Instance créée
      */
-    async importModpack(file, { iconUrl = null, title = null } = {}) {
+    async importModpack(file, known = {}) {
+        let { title = null } = known
         if (this.playing) {
             this.showError("Fermez le jeu avant d'importer un modpack.")
             return false
@@ -711,7 +748,7 @@ class Home {
             `Minecraft <b>${escapeHTML(l.minecraft_version)}</b> · <b>${loader}</b>`,
             `${pack.downloads.length} fichier${pack.downloads.length > 1 ? 's' : ''} à télécharger${pack.size ? ` (${formatSize(pack.size)})` : ''}, ${pack.overrides} inclus dans le modpack`
         ]
-        let icon = await this.modpackIcon(pack, iconUrl)
+        let { icon, origin } = await this.modpackOrigin(pack, known)
         let summary = pack.summary ? `<div class="modpack-summary">${escapeHTML(pack.summary)}</div>` : ''
         let warning = pack.foreignHosts.length
             ? `<div class="confirm-dialog-warning"><b>Attention :</b> certains fichiers proviennent de sites non vérifiés par Modrinth :${reasonsList(pack.foreignHosts)}N'importez ce modpack que si vous avez confiance en sa source.</div>`
@@ -729,7 +766,7 @@ class Home {
                 let check = await validateName(value, this.instances.official)
                 if (check.error) return check.error
                 try {
-                    created = await createInstanceFromModpack(pack, check.name, this.gamePath, { icon, onProgress: setStatus })
+                    created = await createInstanceFromModpack(pack, check.name, this.gamePath, { icon, origin, onProgress: setStatus })
                 } catch (err) {
                     console.error('[Modpack]', err)
                     return `Import impossible : ${err.message}`
@@ -777,32 +814,38 @@ class Home {
     }
 
     /**
-     * Icône d'un modpack (data URL PNG 128 px) : celle du projet Modrinth (connue, ou retrouvée
-     * à partir du fichier), sinon un icon.png à la racine de l'archive.
+     * Projet Modrinth d'un modpack (pour ses mises à jour) et son icône (data URL PNG 128 px).
+     * Retrouvés à partir du fichier s'ils ne sont pas connus ; à défaut d'icône Modrinth, un
+     * icon.png à la racine de l'archive.
      * @param {object} pack Résultat de readModpack
-     * @param {string|null} iconUrl
-     * @returns {Promise<string|null>}
+     * @param {{iconUrl?: string, projectId?: string, versionId?: string}} known
+     * @returns {Promise<{icon: string|null, origin: {projectId: string, versionId: string}|null}>}
      */
-    async modpackIcon(pack, iconUrl) {
+    async modpackOrigin(pack, { iconUrl = null, projectId = null, versionId = null }) {
         let image = null
         try {
-            if (!this.offline && !iconUrl) {
+            if (!this.offline && !projectId) {
                 let version = (await identify([pack.file])).get(pack.file)?.version
-                if (version) iconUrl = (await getProjects([version.project_id])).get(version.project_id)?.icon_url
+                if (version) {
+                    projectId = version.project_id
+                    versionId = version.id
+                    iconUrl = (await getProjects([projectId])).get(projectId)?.icon_url
+                }
             }
             if (!this.offline && iconUrl) {
                 let res = await nodeFetch(iconUrl, { timeout: 10000 })
                 if (res.ok) image = await res.buffer()
             }
         } catch (err) {
-            console.warn('[Modpack] icône Modrinth indisponible :', err.message)
+            console.warn('[Modpack] Modrinth indisponible :', err.message)
         }
+        let origin = projectId ? { projectId, versionId } : null
         try {
             let entry = !image && pack.entries.find(e => e.name === 'icon.png')
             if (entry) image = await readZipEntry(pack.file, entry)
-            return image ? await loadIconImage(new Blob([image])) : null
+            return { icon: image ? await loadIconImage(new Blob([image])) : null, origin }
         } catch {
-            return null // format d'image non pris en charge (SVG...)
+            return { icon: null, origin } // format d'image non pris en charge (SVG...)
         }
     }
 
@@ -877,6 +920,69 @@ class Home {
     }
 
     /**
+     * Identifiants de lancement du compte. Compte Microsoft : jeton renouvelé si besoin ; si les
+     * serveurs Microsoft ne répondent pas, propose de jouer pour ce lancement seulement avec un
+     * compte Venstone du même pseudo (hors-ligne).
+     * @param {object} account Compte enregistré
+     * @param {boolean} online
+     * @returns {Promise<object|null>} null si le lancement est abandonné
+     */
+    async launchAuth(account, online) {
+        if (!isMicrosoft(account)) return account
+        let result = await ipcRenderer.invoke('microsoft-session', this.config.client_id, account, { offline: !online })
+        if (result.account) {
+            result.account.ID = account.ID
+            await this.db.updateData('accounts', result.account, account.ID)
+        }
+        if (!result.error) return result.auth
+
+        if (result.error === 'unreachable') {
+            let { confirmed } = await confirmDialog({
+                title: 'Serveurs Microsoft injoignables',
+                icon: '!',
+                html: `Les serveurs de connexion de Minecraft ne répondent pas pour le moment.<br><br>
+                    Vous pouvez jouer <b>temporairement avec un compte Venstone</b> sous le pseudo <b>${escapeHTML(account.name)}</b>, pour ce lancement seulement.
+                    <div class="confirm-dialog-warning">Les serveurs qui vérifient les comptes officiels refuseront la connexion. Votre compte Microsoft reste enregistré pour les prochaines fois.</div>`,
+                confirmText: 'Jouer avec un compte Venstone',
+                cancelText: 'Annuler'
+            })
+            return confirmed ? offlineAccount(account.name) : null
+        }
+        this.showError(escapeHTML(microsoftError(result) || 'Connexion Microsoft impossible.'))
+        return null
+    }
+
+    /**
+     * Après la fermeture du jeu : si un rapport de plantage a été écrit pendant la session, ou si
+     * la sortie du jeu montre une erreur connue, explique la cause probable.
+     * @param {string} instanceDir
+     * @param {GameOutput} output
+     * @param {number} since Date du lancement (ms)
+     */
+    async reportCrash(instanceDir, output, since) {
+        let reportFile = findCrashReport(instanceDir, since)
+        // Fermeture normale (« Stopping! ») sans rapport : rien à signaler.
+        if (!reportFile && /\bStopping!/.test(output.text)) return
+        let report = null
+        try { report = reportFile ? fs.readFileSync(reportFile, 'utf8') : null } catch { }
+        let crash = analyzeCrash({ output: output.text, report })
+        if (!crash) return
+
+        let logFile = `${instanceDir}/logs/latest.log`
+        let target = reportFile || (fs.existsSync(logFile) ? logFile : null)
+        let details = crash.details.length ? reasonsList(crash.details) : ''
+        let { confirmed } = await confirmDialog({
+            title: 'Le jeu a planté',
+            icon: '!',
+            danger: true,
+            html: `<b>${escapeHTML(crash.title)}</b><br>${escapeHTML(crash.advice)}${details}`,
+            confirmText: target ? (reportFile ? 'Ouvrir le rapport' : 'Ouvrir les logs') : 'OK',
+            cancelText: 'Fermer'
+        })
+        if (confirmed && target) shell.openPath(target)
+    }
+
+    /**
      * Affiche une erreur dans la popup globale.
      * @param {string} content HTML
      */
@@ -905,6 +1011,9 @@ class Home {
             return this.showError("Pas de connexion internet.<br>Cette instance n'a encore jamais été installée : connectez-vous une première fois pour la télécharger.")
         }
 
+        auth = await this.launchAuth(auth, online)
+        if (!auth) return this.setPlayingUI(false)
+
         if (online && instance.fabricApi) {
             progress.indeterminate('Installation de Fabric API...')
             await ensureFabricApi(this.gamePath, instance).catch(err => console.warn('[Fabric API]', err))
@@ -920,9 +1029,9 @@ class Home {
 
         let launch = new OfflineLaunch({ cacheFile: launchCacheFile(this.gamePath, instance), offline: !online })
         let loaderType = instance.loadder?.loadder_type || 'none'
-        // Arguments JVM saisis dans les paramètres (séparés par des espaces, guillemets acceptés).
-        let userJvmArgs = (String(configClient.java_config.jvm_args || '').match(/"[^"]*"|\S+/g) || [])
-            .map(arg => arg.replace(/^"(.*)"$/, '$1'))
+        // Réglages de l'instance (personnelles), sinon ceux des paramètres du launcher.
+        let settings = instance.settings || {}
+        let memory = settings.memory || configClient.java_config.java_memory
 
         let opt = {
             url: instance.official ? instance.url : null,
@@ -945,10 +1054,11 @@ class Home {
             ignored: [...(instance.ignored || [])],
 
             java: {
-                path: configClient.java_config.java_path,
+                path: settings.javaPath || configClient.java_config.java_path,
             },
 
-            JVM_ARGS: [...(instance.jvm_args || []), ...userJvmArgs],
+            // Arguments de l'instance officielle, du launcher, puis de l'instance (prioritaires).
+            JVM_ARGS: [...(instance.jvm_args || []), ...splitArgs(configClient.java_config.jvm_args), ...splitArgs(settings.jvmArgs)],
             GAME_ARGS: [...(instance.game_args || []), ...(configClient.game_config.fullscreen ? ['--fullscreen'] : [])],
 
             screen: {
@@ -957,18 +1067,24 @@ class Home {
             },
 
             memory: {
-                min: `${configClient.java_config.java_memory.min * 1024}M`,
-                max: `${configClient.java_config.java_memory.max * 1024}M`
+                min: `${Math.round(memory.min * 1024)}M`,
+                max: `${Math.round(memory.max * 1024)}M`
             }
         }
 
         progress.indeterminate(online ? 'Vérification des fichiers...' : 'Lancement hors-ligne...')
         ipcRenderer.send('main-window-progress-load')
 
+        let output = new GameOutput()
+        let launchedAt = Date.now()
+        let playingSince = null
         let finished = false
         let reset = () => {
             if (finished) return
             finished = true
+            // Une session de moins de 30 s est un lancement raté, pas du temps de jeu.
+            let seconds = playingSince ? (Date.now() - playingSince) / 1000 : 0
+            if (seconds >= 30) recordPlaySession(instance.name, seconds).catch(err => console.warn('[Stats]', err))
             try { finishSharedData(this.gamePath, instanceDir, instance) } catch (err) { console.error('[Shared]', err) }
             if (configClient.launcher_config.closeLauncher == 'close-launcher') ipcRenderer.send("main-window-show")
             ipcRenderer.send('main-window-progress-reset')
@@ -1017,9 +1133,22 @@ class Home {
         });
 
         let started = false
+        // Fin du lancement (une seule fois) : fermeture du jeu, ou Java qui n'a pas pu démarrer.
+        let ended = false
+        let end = () => {
+            if (ended) return
+            ended = true
+            reset()
+            console.log('Close');
+            this.reportCrash(instanceDir, output, launchedAt)
+        }
+
         launch.on('data', (e) => {
+            output.push(e)
+            if (JVM_START_FAILED.test(e)) setTimeout(end, 300) // laisse arriver la fin du message
             if (!started) {
                 started = true
+                playingSince = Date.now()
                 progress.done('En jeu')
                 if (configClient.launcher_config.closeLauncher == 'close-launcher') ipcRenderer.send("main-window-hide")
                 new logger('Minecraft', '#36b030');
@@ -1028,10 +1157,7 @@ class Home {
             console.log(e);
         })
 
-        launch.on('close', () => {
-            reset()
-            console.log('Close');
-        });
+        launch.on('close', end);
 
         launch.on('error', err => {
             console.error(err);

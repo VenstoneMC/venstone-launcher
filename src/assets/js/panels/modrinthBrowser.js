@@ -448,7 +448,7 @@ export default class ModrinthBrowser {
             if (kind === 'modpacks') {
                 let file = await downloadVersion(version, temp)
                 this.setBusy(hit, false)
-                if (await this.home.importModpack(file, { iconUrl: hit.icon_url, title: hit.title })) this.close()
+                if (await this.home.importModpack(file, { iconUrl: hit.icon_url, title: hit.title, projectId: hit.project_id, versionId: version.id })) this.close()
                 return
             }
 

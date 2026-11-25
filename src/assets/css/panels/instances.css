@@ -1512,6 +1512,57 @@ select.field-input option {
     pointer-events: none;
 }
 
+.edit-playtime {
+    color: #8a8a8a;
+}
+
+.edit-modpack-banner {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 8px 8px 8px 12px;
+    border-radius: 10px;
+    background: #2379ee14;
+    border: solid 1px #2379ee55;
+    color: #cfdff7;
+    font: normal normal normal 12.5px/17px Poppins;
+}
+
+.edit-modpack-banner.visible {
+    display: flex;
+}
+
+.edit-modpack-banner > svg {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    fill: #5aa0ff;
+}
+
+.edit-modpack-banner span {
+    flex: 1;
+}
+
+.edit-modpack-banner b {
+    color: #F1F1F1;
+}
+
+.edit-modpack-banner .btn-small {
+    flex: none;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: #2379ee;
+    border: solid 1px #5aa0ff;
+    color: #ffffff;
+    font: normal normal bold 12px/16px Poppins;
+    cursor: pointer;
+}
+
+.edit-modpack-banner .btn-small:hover {
+    background: #0d51ad;
+}
+
 .edit-tab-btn.hidden {
     display: none;
 }
@@ -1614,6 +1665,46 @@ select.field-input option {
     gap: 12px;
 }
 
+.field-section {
+    margin-top: 6px;
+    padding-top: 12px;
+    border-top: solid 1px #333333;
+    color: #8a8a8a;
+    font: normal normal bold 11px/16px Poppins;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
+.memory-inputs,
+.java-inputs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #9a9a9a;
+    font: normal normal normal 12.5px/16px Poppins;
+}
+
+.memory-inputs .field-input {
+    width: 76px;
+    flex: none;
+}
+
+.java-inputs .field-input {
+    flex: 1;
+    min-width: 0;
+    text-overflow: ellipsis;
+}
+
+.java-inputs .tool-btn {
+    width: 36px;
+    height: 36px;
+}
+
+.java-inputs .tool-btn.disabled {
+    opacity: .4;
+    pointer-events: none;
+}
+
 .edit-form .color-swatches {
     margin-top: 0;
     padding: 7px 4px;
@@ -1651,10 +1742,18 @@ select.field-input option {
     gap: 8px;
 }
 
+.edit-actions .edit-delete {
+    grid-column: 1 / -1;
+}
+
 .edit-actions .btn {
     gap: 6px;
     padding: 9px 10px;
     font-size: 13px;
+}
+
+.edit-actions .btn-danger-ghost svg {
+    flex: none;
 }
 
 .edit-actions .btn svg {

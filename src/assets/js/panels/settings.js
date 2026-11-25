@@ -3,7 +3,7 @@
  * Luuxis License v1.0 (voir fichier LICENSE pour les détails en FR/EN)
  */
 
-import { changePanel, accountSelect, database, popup, pkg } from '../utils.js'
+import { changePanel, accountSelect, database, popup, pkg, filePath } from '../utils.js'
 import { getGamePath, resolveInstanceSelection, instanceFolder } from '../utils/instances.js'
 import { sharedPath } from '../utils/shared.js'
 import { cacheStats, clearCache } from '../utils/modrinth.js'
@@ -88,7 +88,7 @@ class Settings {
             if (!card) return;
 
             if (card.id == 'add') {
-                document.querySelector('.cancel-home').style.display = 'inline';
+                window.dispatchEvent(new CustomEvent('venstone:add-account', { detail: { cancelable: true } }));
                 return changePanel('login');
             }
 
@@ -101,7 +101,10 @@ class Settings {
                     card.remove();
 
                     let allAccounts = await this.db.readAllData('accounts');
-                    if (!allAccounts.length) return changePanel('login');
+                    if (!allAccounts.length) {
+                        window.dispatchEvent(new CustomEvent('venstone:add-account'));
+                        return changePanel('login');
+                    }
 
                     let configClient = await this.db.readData('configClient');
                     if (configClient.account_selected == id) {
@@ -292,7 +295,7 @@ class Settings {
         });
 
         javaPathInputFile.addEventListener('change', async () => {
-            let file = javaPathInputFile.files[0]?.path;
+            let file = javaPathInputFile.files[0] && filePath(javaPathInputFile.files[0]);
             if (!file) return;
             let name = file.split(/[\\/]/).pop().replace(/\.exe$/i, '');
             if (name !== 'java' && name !== 'javaw') {

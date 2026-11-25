@@ -9,9 +9,10 @@
 import InstanceForm, { escapeHTML, initials, loaderLabel } from '../utils/instanceForm.js'
 import { confirmDialog, reasonsList } from '../utils/dialog.js'
 import ModpackExport from './modpackExport.js'
+import { filePath } from '../utils.js'
 import { listMods, setModEnabled, importMod, deleteMod, readModInfo, checkCompatibility, modsFolder } from '../utils/mods.js'
-import { identify, findUpdates, resolveDependencies, downloadVersion, tempFolder, contentLoaders, FABRIC_API_ID } from '../utils/modrinth.js'
-import { instanceFolder, validateName, updateLocalInstance, deleteLocalInstance } from '../utils/instances.js'
+import { identify, findUpdates, resolveDependencies, downloadVersion, tempFolder, contentLoaders, projectVersions, getVersions, bestVersion, relativeDate, FABRIC_API_ID } from '../utils/modrinth.js'
+import { instanceFolder, validateName, updateLocalInstance, deleteLocalInstance, updateModpackInstance, duplicateLocalInstance, getPlayStats, formatPlayTime } from '../utils/instances.js'
 import {
     PACK_FOLDERS, listPacks, importPack, deletePack, readResourcePack, readShaderPack, packCompatibility, gameResourceFormat,
     formatRangeLabel, activeResourcePacks, setResourcePacks, shaderLoader, activeShaderPack, setActiveShaderPack
@@ -29,6 +30,19 @@ const ICON_IMAGE = '<svg viewBox="0 0 24 24"><path d="M4 4h16a1 1 0 0 1 1 1v14a1
 const ICON_SUN = '<svg viewBox="0 0 24 24"><path d="M12 7a5 5 0 1 1 0 10 5 5 0 0 1 0-10zM11 1h2v3h-2zm0 19h2v3h-2zM1 11h3v2H1zm19 0h3v2h-3zM4.2 2.8l2.1 2.1-1.4 1.4-2.1-2.1zm14.9 14.9 2.1 2.1-1.4 1.4-2.1-2.1zM2.8 19.8l2.1-2.1 1.4 1.4-2.1 2.1zM17.7 4.9l2.1-2.1 1.4 1.4-2.1 2.1z"/></svg>'
 
 /** Textes propres à chaque type de pack. */
+/**
+ * Réglages propres à une instance, sous une forme comparable (null / '' = réglage du launcher).
+ * @param {object} [settings]
+ * @returns {{memory: {min: number, max: number}|null, javaPath: string|null, jvmArgs: string}}
+ */
+function normalizeSettings(settings) {
+    return {
+        memory: settings?.memory ? { min: settings.memory.min, max: settings.memory.max } : null,
+        javaPath: settings?.javaPath || null,
+        jvmArgs: settings?.jvmArgs || ''
+    }
+}
+
 const PACK_TEXT = {
     resourcepacks: { one: 'pack de textures', icon: ICON_IMAGE, empty: 'Aucun pack de textures' },
     shaderpacks: { one: 'pack de shaders', icon: ICON_SUN, empty: 'Aucun pack de shaders' }
@@ -46,6 +60,8 @@ export default class InstanceEditor {
         /** Fichiers reconnus sur Modrinth (affichés « à jour » s'ils n'ont pas de mise à jour). */
         this.identified = { mods: new Set(), resourcepacks: new Set(), shaderpacks: new Set() }
         this.updateTimers = {}
+        /** Numéro de la dernière lecture de chaque onglet (les lectures dépassées sont ignorées). */
+        this.reads = {}
         this.formLoaded = false
         this.form = new InstanceForm(this.root.querySelector('.edit-general'), { onChange: () => this.updateSaveState() })
         this.exporter = new ModpackExport(this)
@@ -94,6 +110,11 @@ export default class InstanceEditor {
         this.q('.edit-save').addEventListener('click', () => this.save())
         this.q('.edit-delete').addEventListener('click', () => this.deleteInstance())
         this.q('.edit-export').addEventListener('click', () => this.exporter.open())
+        this.q('.edit-duplicate').addEventListener('click', () => this.duplicate())
+        this.bindAdvanced()
+        this.q('.edit-modpack-banner').addEventListener('click', e => {
+            if (e.target.closest('.modpack-update')) this.updateModpack()
+        })
     }
 
     /**
@@ -129,7 +150,7 @@ export default class InstanceEditor {
             fileInput.click()
         })
         fileInput.addEventListener('change', () => {
-            let files = [...fileInput.files].map(f => f.path).filter(Boolean)
+            let files = [...fileInput.files].map(filePath).filter(Boolean)
             if (files.length) this.importFiles(kind, files)
         })
 
@@ -165,7 +186,7 @@ export default class InstanceEditor {
             e.preventDefault()
             depth = 0
             pane.classList.remove('dragging')
-            let files = [...(e.dataTransfer?.files || [])].map(f => f.path).filter(Boolean)
+            let files = [...(e.dataTransfer?.files || [])].map(filePath).filter(Boolean)
             if (files.length) this.importFiles(kind, files)
         })
     }
@@ -300,11 +321,14 @@ export default class InstanceEditor {
     open(instance, tab = null) {
         this.instance = instance
         this.formLoaded = false
+        this.mods = []
+        this.packs = { resourcepacks: [], shaderpacks: [] }
         Object.values(this.updates).forEach(map => map.clear())
         Object.values(this.identified).forEach(set => set.clear())
         this.root.querySelectorAll('.pane-modrinth, .pane-updates').forEach(btn => btn.classList.toggle('disabled', !!this.home.offline))
         this.root.querySelectorAll('.pane-search').forEach(input => input.value = '')
         this.renderHeader()
+        this.fillAdvanced(instance)
         this.form.reset(instance.loadder ? {
             name: instance.name,
             color: instance.color,
@@ -315,6 +339,7 @@ export default class InstanceEditor {
             fabricApi: instance.fabricApi || null
         } : {})
         this.refreshAll()
+        this.checkModpackUpdate()
         this.showTab(tab || (this.modded ? 'mods' : 'resourcepacks'))
         this.home.openPopup('.edit-popup')
     }
@@ -325,11 +350,10 @@ export default class InstanceEditor {
     }
 
     /** Relit tous les onglets de contenu (mods et shaders ne sont proposés qu'aux instances moddées). */
-    refreshAll() {
+    async refreshAll() {
         this.q('.edit-tab-mods').classList.toggle('hidden', !this.modded)
         this.q('.edit-tab-shaders').classList.toggle('hidden', !this.modded)
-        this.refreshMods()
-        this.refreshPacks('resourcepacks')
+        await Promise.all([this.refreshMods(), this.refreshPacks('resourcepacks')])
     }
 
     /**
@@ -352,6 +376,12 @@ export default class InstanceEditor {
         this.home.iconHTML(i, this.q('.edit-icon'))
         this.q('.edit-title').textContent = i.name
         this.q('.edit-subtitle').innerHTML = `<span class="loader-badge loader-${escapeHTML(i.loadder?.loadder_type || 'none')}">${escapeHTML(loaderLabel(i))}</span> Minecraft ${escapeHTML(i.loadder?.minecraft_version)}`
+        getPlayStats().then(stats => {
+            let entry = stats[i.name]
+            let time = formatPlayTime(entry?.playTime)
+            if (!time || this.instance !== i) return
+            this.q('.edit-subtitle').insertAdjacentHTML('beforeend', `<span class="edit-playtime"> · ${time} de jeu, dernière partie ${relativeDate(entry.lastPlayed)}</span>`)
+        })
     }
 
     /**
@@ -390,20 +420,36 @@ export default class InstanceEditor {
     /* ------------------------------------------------------------------ */
 
     /** Relit le dossier des mods et recalcule leur compatibilité. */
-    refreshMods() {
-        try {
-            this.mods = listMods(this.dir)
-        } catch (err) {
+    async refreshMods() {
+        let instance = this.instance
+        let read = this.reads.mods = (this.reads.mods || 0) + 1
+        let mods = await this.whileLoading('mods', listMods(this.dir)).catch(err => {
             console.error('[Mods]', err)
-            this.mods = []
-        }
+            return []
+        })
+        if (instance !== this.instance || read !== this.reads.mods) return
+        this.mods = mods
         for (let mod of this.mods) {
             mod.compat = mod.enabled ? checkCompatibility(mod.info, this.instance, this.mods) : null
         }
         this.renderMods()
         this.scheduleUpdateCheck('mods')
         // Les shaders dépendent des mods installés (Iris, Oculus, OptiFine).
-        if (this.modded) this.refreshPacks('shaderpacks')
+        if (this.modded) await this.refreshPacks('shaderpacks')
+    }
+
+    /**
+     * Lecture d'un onglet : indication « Lecture... » si elle dure (premier affichage d'un gros
+     * modpack ; ensuite les métadonnées sont en cache).
+     * @param {"mods"|"resourcepacks"|"shaderpacks"} kind
+     * @param {Promise} promise
+     */
+    whileLoading(kind, promise) {
+        let timer = setTimeout(() => {
+            let text = { mods: 'Lecture des mods...', resourcepacks: 'Lecture des packs de textures...', shaderpacks: 'Lecture des shaders...' }[kind]
+            this.pane(kind).querySelector('.pane-list').innerHTML = `<div class="browse-loading"><span class="browse-spinner"></span> ${text}</div>`
+        }, 200)
+        return promise.finally(() => clearTimeout(timer))
     }
 
     /** Affiche la liste des mods (filtrée par la recherche) avec leurs badges. */
@@ -506,7 +552,6 @@ export default class InstanceEditor {
 
     /** Import avec vérification : demande confirmation pour chaque mod incompatible ou inconnu. */
     async importMods(files) {
-        let added = 0
         for (let file of files) {
             if (!/\.jar$/i.test(file)) {
                 await confirmDialog({ title: 'Fichier ignoré', html: `<b>${escapeHTML(path.basename(file))}</b> n'est pas un mod (.jar).`, confirmText: 'OK', cancelText: 'Fermer' })
@@ -554,13 +599,11 @@ export default class InstanceEditor {
 
             try {
                 importMod(this.dir, file)
-                added++
             } catch (err) {
                 this.home.showError(`Import de ${name} impossible : ${escapeHTML(err.message)}`)
             }
-            this.refreshMods()
+            await this.refreshMods()
         }
-        if (added) this.refreshMods()
     }
 
     /* ------------------------------------------------------------------ */
@@ -572,13 +615,14 @@ export default class InstanceEditor {
      * et la compatibilité de chaque pack.
      * @param {"resourcepacks"|"shaderpacks"} kind
      */
-    refreshPacks(kind) {
-        let packs = []
-        try {
-            packs = listPacks(this.dir, kind)
-        } catch (err) {
+    async refreshPacks(kind) {
+        let instance = this.instance
+        let read = this.reads[kind] = (this.reads[kind] || 0) + 1
+        let packs = await this.whileLoading(kind, listPacks(this.dir, kind)).catch(err => {
             console.error(`[${kind}]`, err)
-        }
+            return []
+        })
+        if (instance !== this.instance || read !== this.reads[kind]) return
 
         if (kind === 'resourcepacks') {
             this.gameFormat = gameResourceFormat(this.home.gamePath, this.mcVersion)
@@ -824,8 +868,77 @@ export default class InstanceEditor {
             } catch (err) {
                 this.home.showError(`Import de ${name} impossible : ${escapeHTML(err.message)}`)
             }
-            this.refreshPacks(kind)
+            await this.refreshPacks(kind)
         }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Modpack d'origine                                                   */
+    /* ------------------------------------------------------------------ */
+
+    /** Cherche une nouvelle version du modpack dont vient l'instance (projet Modrinth connu). */
+    async checkModpackUpdate() {
+        let instance = this.instance
+        let origin = instance.modpack
+        this.modpackUpdate = null
+        this.renderModpackBanner()
+        if (this.home.offline || !origin?.projectId) return
+        try {
+            let latest = bestVersion(await projectVersions(origin.projectId))
+            if (!latest || latest.id === origin.versionId) return
+            let [current] = origin.versionId ? await getVersions([origin.versionId]) : []
+            if (current && new Date(latest.date_published) <= new Date(current.date_published)) return
+            if (this.instance !== instance) return
+            this.modpackUpdate = latest
+            this.renderModpackBanner()
+        } catch (err) {
+            console.warn('[Modpack] mise à jour non vérifiée :', err.message)
+        }
+    }
+
+    renderModpackBanner() {
+        let banner = this.q('.edit-modpack-banner')
+        let update = this.modpackUpdate
+        banner.classList.toggle('visible', !!update)
+        if (!update) return banner.innerHTML = ''
+        let mc = update.game_versions?.[update.game_versions.length - 1]
+        let mcChange = mc && mc !== this.mcVersion ? ` · Minecraft ${escapeHTML(mc)}` : ''
+        banner.innerHTML = `${ICON_UPDATE}<span>Nouvelle version de <b>${escapeHTML(this.instance.modpack.name)}</b> : ${escapeHTML(update.version_number)}${mcChange}</span>
+            <div class="btn-small modpack-update">Mettre à jour le modpack</div>`
+    }
+
+    /** Passe l'instance à la nouvelle version du modpack, après confirmation. */
+    async updateModpack() {
+        let version = this.modpackUpdate
+        if (!version) return
+        if (this.home.playing) return this.home.showError("Fermez le jeu avant de mettre à jour le modpack.")
+        let instance = this.instance
+        let mc = version.game_versions?.[version.game_versions.length - 1]
+        let changes = [`${instance.modpack.name} : ${instance.modpack.version || '?'} → ${version.version_number}`]
+        if (mc && mc !== this.mcVersion) changes.push(`Minecraft ${this.mcVersion} → ${mc}`)
+
+        let updated = null
+        let { confirmed } = await confirmDialog({
+            title: 'Mettre à jour le modpack ?',
+            icon: '!',
+            html: `${reasonsList(changes, true)}
+                <div class="confirm-dialog-warning"><b>Attention :</b> les fichiers du modpack sont remplacés par ceux de la nouvelle version, les réglages des mods qu'il fournit peuvent donc revenir à leurs valeurs d'origine.
+                Les mods que vous avez ajoutés, vos options de jeu et vos mondes sont conservés.</div>`,
+            confirmText: 'Mettre à jour',
+            busyText: 'Mise à jour...',
+            onConfirm: async (_, setStatus) => {
+                try {
+                    updated = await updateModpackInstance(instance, this.home.gamePath, version, setStatus)
+                    return null
+                } catch (err) {
+                    console.error('[Modpack]', err)
+                    return `Mise à jour impossible : ${err.message}`
+                }
+            }
+        })
+        if (!confirmed || !updated) return
+        await this.home.refreshInstances()
+        this.open(updated, 'mods')
     }
 
     /* ------------------------------------------------------------------ */
@@ -975,6 +1088,97 @@ export default class InstanceEditor {
     }
 
     /* ------------------------------------------------------------------ */
+    /* Réglages avancés (mémoire, Java, arguments JVM)                     */
+    /* ------------------------------------------------------------------ */
+
+    bindAdvanced() {
+        let memory = this.q('.edit-memory-custom')
+        let min = this.q('.edit-memory-min')
+        let max = this.q('.edit-memory-max')
+        let java = this.q('.edit-java-custom')
+        let file = this.q('.edit-java-file')
+
+        memory.addEventListener('change', () => { this.renderAdvanced(); this.updateSaveState() })
+        min.addEventListener('change', () => { if (+min.value > +max.value) max.value = min.value; this.updateSaveState() })
+        max.addEventListener('change', () => { if (+max.value < +min.value) min.value = max.value; this.updateSaveState() })
+        for (let input of [min, max, this.q('.edit-jvm-args')]) input.addEventListener('input', () => this.updateSaveState())
+
+        java.addEventListener('change', () => {
+            // Activer sans exécutable choisi : on le demande tout de suite.
+            if (java.checked && !this.javaPath) {
+                java.checked = false
+                return this.pickJava()
+            }
+            this.renderAdvanced()
+            this.updateSaveState()
+        })
+        this.q('.edit-java-pick').addEventListener('click', () => this.pickJava())
+        file.addEventListener('change', () => {
+            let path = file.files[0] && filePath(file.files[0])
+            if (!path) return
+            if (!/^javaw?(\.exe)?$/i.test(path.split(/[\\/]/).pop())) return this.form.setError('Sélectionnez un fichier nommé java ou javaw.')
+            this.javaPath = path
+            java.checked = true
+            this.renderAdvanced()
+            this.updateSaveState()
+        })
+    }
+
+    pickJava() {
+        let file = this.q('.edit-java-file')
+        file.value = ''
+        file.click()
+    }
+
+    /** Remplit les réglages avancés : ceux de l'instance, sinon ceux du launcher (grisés). */
+    async fillAdvanced(instance) {
+        let settings = normalizeSettings(instance.settings)
+        this.javaPath = settings.javaPath
+        this.q('.edit-memory-custom').checked = !!settings.memory
+        this.q('.edit-java-custom').checked = !!settings.javaPath
+        this.q('.edit-jvm-args').value = settings.jvmArgs
+        if (settings.memory) {
+            this.q('.edit-memory-min').value = settings.memory.min
+            this.q('.edit-memory-max').value = settings.memory.max
+        }
+        let config = await this.home.db.readData('configClient')
+        this.launcherSettings = {
+            memory: config?.java_config?.java_memory || { min: 2, max: 4 },
+            javaPath: config?.java_config?.java_path || null
+        }
+        if (this.instance === instance) this.renderAdvanced()
+    }
+
+    renderAdvanced() {
+        let launcher = this.launcherSettings || { memory: { min: 2, max: 4 }, javaPath: null }
+        let customMemory = this.q('.edit-memory-custom').checked
+        for (let [input, value] of [[this.q('.edit-memory-min'), launcher.memory.min], [this.q('.edit-memory-max'), launcher.memory.max]]) {
+            input.disabled = !customMemory
+            if (!customMemory) input.value = value
+        }
+        let customJava = this.q('.edit-java-custom').checked
+        let path = this.q('.edit-java-path')
+        path.disabled = !customJava
+        path.value = customJava ? this.javaPath : (launcher.javaPath ? `Comme le launcher : ${launcher.javaPath}` : 'Automatique, comme le launcher')
+        path.title = path.value
+    }
+
+    /** Réglages avancés saisis (null = réglage du launcher). */
+    advancedData() {
+        let custom = this.q('.edit-memory-custom').checked
+        return {
+            memory: custom ? { min: parseFloat(this.q('.edit-memory-min').value), max: parseFloat(this.q('.edit-memory-max').value) } : null,
+            javaPath: this.q('.edit-java-custom').checked ? this.javaPath : null,
+            jvmArgs: this.q('.edit-jvm-args').value.trim()
+        }
+    }
+
+    advancedValid() {
+        let { memory } = this.advancedData()
+        return !memory || (memory.min >= 0.5 && memory.max >= memory.min)
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Paramètres                                                          */
     /* ------------------------------------------------------------------ */
 
@@ -992,7 +1196,8 @@ export default class InstanceEditor {
             version: d.minecraft_version !== i.loadder.minecraft_version
                 || d.loadder_type !== (i.loadder.loadder_type || 'none')
                 || (d.loadder_type !== 'none' && d.loadder_version !== i.loadder.loadder_version),
-            api: (d.fabricApi?.filename || null) !== (i.fabricApi?.filename || null)
+            api: (d.fabricApi?.filename || null) !== (i.fabricApi?.filename || null),
+            settings: JSON.stringify(normalizeSettings(this.advancedData())) !== JSON.stringify(normalizeSettings(i.settings))
         }
     }
 
@@ -1000,8 +1205,8 @@ export default class InstanceEditor {
     updateSaveState() {
         if (!this.instance) return
         let c = this.changes()
-        let changed = c.name || c.color || c.icon || c.version || c.api
-        this.q('.edit-save').classList.toggle('disabled', !changed || !this.form.ready())
+        let changed = c.name || c.color || c.icon || c.version || c.api || c.settings
+        this.q('.edit-save').classList.toggle('disabled', !changed || !this.form.ready() || !this.advancedValid())
         this.q('.edit-version-note').classList.toggle('visible', c.version && (this.mods.length > 0 || this.packs.resourcepacks.length > 0))
     }
 
@@ -1041,12 +1246,14 @@ export default class InstanceEditor {
                     loadder_type: d.loadder_type,
                     loadder_version: d.loadder_version
                 },
-                fabricApi: d.fabricApi
+                fabricApi: d.fabricApi,
+                settings: normalizeSettings(this.advancedData())
             }, this.home.gamePath)
             this.instance = updated
             if (wasSelected) await this.home.selectInstance(updated.name, { silent: true })
             await this.home.refreshInstances()
             this.form.reset({ ...updated.loadder, name: updated.name, color: updated.color, icon: updated.icon || null, fabricApi: updated.fabricApi || null })
+            this.fillAdvanced(updated)
             this.formLoaded = false
             this.showTab('general')
             this.renderHeader()
@@ -1058,6 +1265,33 @@ export default class InstanceEditor {
             this.saving = false
             this.updateSaveState()
         }
+    }
+
+    /** Crée une copie de l'instance (fichiers et réglages), puis l'ouvre. */
+    async duplicate() {
+        let source = this.instance
+        let base = `${source.name.slice(0, 24)} (copie`
+        let suggestion = `${base})`
+        for (let n = 2; (await validateName(suggestion, this.home.instances.official)).error && n < 50; n++) suggestion = `${base} ${n})`
+
+        let created = null
+        let { confirmed } = await confirmDialog({
+            title: "Dupliquer l'instance ?",
+            icon: '?',
+            html: `Une copie de <b>${escapeHTML(source.name)}</b> sera créée avec ses mods, packs, configs et réglages.<br><br><b>Nom de la copie</b>`,
+            input: { value: suggestion, placeholder: 'Nom de la copie' },
+            confirmText: 'Dupliquer',
+            busyText: 'Copie en cours...',
+            onConfirm: async value => {
+                let check = await validateName(value, this.home.instances.official)
+                if (check.error) return check.error
+                created = await duplicateLocalInstance(source, check.name, this.home.gamePath)
+                return null
+            }
+        })
+        if (!confirmed || !created) return
+        await this.home.refreshInstances()
+        this.open(created, 'general')
     }
 
     /** Supprime l'instance après confirmation (fichiers optionnels, mondes conservés). */

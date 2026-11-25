@@ -239,6 +239,9 @@
                 <div class="edit-tab-btn" data-tab="general">Paramètres de l'instance</div>
             </div>
 
+            <!-- Nouvelle version du modpack d'origine (instances importées depuis Modrinth) -->
+            <div class="edit-modpack-banner"></div>
+
             <!-- Onglets de contenu : mods, packs de textures, shaders -->
             <div class="edit-pane edit-pane-mods content-pane active" data-kind="mods">
                 <div class="mods-toolbar">
@@ -361,12 +364,53 @@
                                 <select class="field-input create-fabricapi-version"></select>
                             </div>
                         </div>
+
+                        <!-- Réglages propres à l'instance (sinon ceux des paramètres du launcher) -->
+                        <div class="field-section">Réglages avancés</div>
+                        <div class="field-row">
+                            <div class="field">
+                                <div class="field-label-row">
+                                    <label class="field-label">Mémoire allouée</label>
+                                    <label class="toggle-small">
+                                        <input type="checkbox" class="edit-memory-custom"/>
+                                        <span>Personnaliser</span>
+                                    </label>
+                                </div>
+                                <div class="memory-inputs">
+                                    <input type="number" class="field-input edit-memory-min" min="0.5" step="0.5"/>
+                                    <span>à</span>
+                                    <input type="number" class="field-input edit-memory-max" min="0.5" step="0.5"/>
+                                    <span>Go</span>
+                                </div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label-row">
+                                    <label class="field-label">Java</label>
+                                    <label class="toggle-small">
+                                        <input type="checkbox" class="edit-java-custom"/>
+                                        <span>Personnaliser</span>
+                                    </label>
+                                </div>
+                                <div class="java-inputs">
+                                    <input type="text" class="field-input edit-java-path" readonly/>
+                                    <div class="tool-btn edit-java-pick" data-tip="Choisir java ou javaw"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+                                </div>
+                                <input type="file" class="hidden-file edit-java-file"/>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="field-label">Arguments JVM de l'instance</label>
+                            <input type="text" class="field-input edit-jvm-args" spellcheck="false" placeholder="Ajoutés après ceux des paramètres du launcher"/>
+                        </div>
                     </div>
 
                     <aside class="edit-side">
                         <div class="edit-actions">
                             <div class="btn btn-secondary edit-export" title="Exporter en modpack Modrinth (.mrpack)">
                                 <svg viewBox="0 0 24 24"><path d="M11 16h2V6.8l3.3 3.3 1.4-1.4L12 3 6.3 8.7l1.4 1.4L11 6.8zM4 18h16v2H4z"/></svg> Exporter
+                            </div>
+                            <div class="btn btn-secondary edit-duplicate" title="Créer une copie de cette instance">
+                                <svg viewBox="0 0 24 24"><path d="M8 3h11a2 2 0 0 1 2 2v11h-2V5H8zM4 7h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm0 2v11h11V9z"/></svg> Dupliquer
                             </div>
                             <div class="btn btn-danger-ghost edit-delete" title="Supprimer l'instance">
                                 <svg viewBox="0 0 24 24"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 11a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1z"/></svg> Supprimer

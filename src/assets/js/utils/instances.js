@@ -10,7 +10,8 @@ const { ipcRenderer } = require('electron');
 
 import config from './config.js';
 import { unlinkSharedData } from './shared.js';
-import { installModpack } from './mrpack.js';
+import { installModpack, updateModpack, readModpack } from './mrpack.js';
+import { downloadVersion, tempFolder } from './modrinth.js';
 
 const TIMEOUT = 8000;
 const FORBIDDEN_CHARS = /[<>:"/\\|?*\x00-\x1F]/g;
@@ -182,10 +183,11 @@ export async function createLocalInstance(data) {
  * @param {object} pack
  * @param {string} name Nom de l'instance (déjà validé)
  * @param {string} gamePath
- * @param {{icon?: string|null, onProgress?: (text: string) => void}} [options] `icon` : data URL PNG
+ * @param {{icon?: string|null, origin?: {projectId: string, versionId: string}, onProgress?: (text: string) => void}} [options]
+ *        `icon` : data URL PNG ; `origin` : projet Modrinth du modpack (pour ses mises à jour)
  * @returns {Promise<object>} Instance créée
  */
-export async function createInstanceFromModpack(pack, name, gamePath, { icon = null, onProgress } = {}) {
+export async function createInstanceFromModpack(pack, name, gamePath, { icon = null, origin = null, onProgress } = {}) {
     let dir = instanceFolder(gamePath, { name });
     if (fs.existsSync(dir)) throw new Error(`Un dossier "${name}" existe déjà dans les instances.`);
     try {
@@ -200,8 +202,32 @@ export async function createInstanceFromModpack(pack, name, gamePath, { icon = n
         icon,
         ...pack.loadder,
         fabricApi: null, // déjà fournie par le modpack s'il en a besoin
-        modpack: { name: pack.name, version: pack.version }
+        modpack: { name: pack.name, version: pack.version, projectId: origin?.projectId || null, versionId: origin?.versionId || null }
     });
+}
+
+/**
+ * Passe une instance issue d'un modpack Modrinth à une autre version du modpack : contenu mis
+ * à jour (voir mrpack.updateModpack), version du jeu et loader de la nouvelle version.
+ * @param {object} instance
+ * @param {string} gamePath
+ * @param {object} version Version Modrinth du modpack
+ * @param {(text: string) => void} [onProgress]
+ * @returns {Promise<object>} Instance mise à jour
+ */
+export async function updateModpackInstance(instance, gamePath, version, onProgress = () => { }) {
+    let temp = tempFolder();
+    try {
+        onProgress('Téléchargement du modpack...');
+        let pack = await readModpack(await downloadVersion(version, temp));
+        await updateModpack(pack, instanceFolder(gamePath, instance), onProgress);
+        return await updateLocalInstance(instance.name, {
+            loadder: pack.loadder,
+            modpack: { ...instance.modpack, version: pack.version || version.version_number, versionId: version.id }
+        }, gamePath);
+    } finally {
+        fs.rmSync(temp, { recursive: true, force: true });
+    }
 }
 
 /**
@@ -250,6 +276,7 @@ export async function updateLocalInstance(name, changes, gamePath) {
 
     list[index] = next;
     await saveLocalInstances(list);
+    if (next.name !== current.name) await renamePlayStats(current.name, next.name);
     return { ...next, local: true };
 }
 
@@ -277,6 +304,58 @@ export async function deleteLocalInstance(name, gamePath, deleteFiles) {
 const CLONE_SKIP = new Set(['saves', 'screenshots', 'logs', 'crash-reports', 'downloads', 'servers.dat.avant-partage']);
 
 /**
+ * Copie les fichiers d'une instance dans une nouvelle (mods, configs, packs, options). Les mondes,
+ * serveurs et captures étant partagés entre toutes les instances, ils ne sont pas copiés.
+ * Le cache de lancement suit : la copie est jouable hors-ligne immédiatement.
+ * @param {{name: string}} source
+ * @param {string} name Nom de la copie (déjà validé)
+ * @param {string} gamePath
+ */
+async function copyInstanceFiles(source, name, gamePath) {
+    let from = instanceFolder(gamePath, source);
+    let target = instanceFolder(gamePath, { name });
+    if (fs.existsSync(target)) throw new Error(`Un dossier "${name}" existe déjà dans les instances.`);
+
+    try {
+        fs.mkdirSync(target, { recursive: true });
+        // Entrées de premier niveau triées ici (et non dans le filtre de cp, qui reçoit des chemins
+        // « \\?\C:\... » sous Windows). Jamais de lien : les dossiers partagés restent intacts.
+        let entries = fs.existsSync(from) ? fs.readdirSync(from, { withFileTypes: true }) : [];
+        for (let entry of entries) {
+            if (CLONE_SKIP.has(entry.name) || entry.isSymbolicLink()) continue;
+            await fs.promises.cp(path.join(from, entry.name), path.join(target, entry.name), {
+                recursive: true,
+                filter: src => {
+                    try { return !fs.lstatSync(src).isSymbolicLink(); } catch { return false; }
+                }
+            });
+        }
+        let cache = launchCacheFile(gamePath, source);
+        if (fs.existsSync(cache)) fs.copyFileSync(cache, launchCacheFile(gamePath, { name }));
+    } catch (err) {
+        fs.rmSync(target, { recursive: true, force: true });
+        throw new Error(`Copie des fichiers impossible (le jeu est-il ouvert ?) : ${err.message}`);
+    }
+}
+
+/**
+ * Duplique une instance personnelle (fichiers et réglages).
+ * @param {object} source Instance locale
+ * @param {string} name Nom de la copie (déjà validé)
+ * @param {string} gamePath
+ * @returns {Promise<object>} Instance créée
+ */
+export async function duplicateLocalInstance(source, name, gamePath) {
+    await copyInstanceFiles(source, name, gamePath);
+    let list = await getLocalInstances();
+    let { local, ...data } = source;
+    let instance = { ...structuredClone(data), name, created: Date.now() };
+    list.push(instance);
+    await saveLocalInstances(list);
+    return { ...instance, local: true };
+}
+
+/**
  * Crée une instance personnelle modifiable à partir d'une instance officielle installée :
  * mêmes versions, mods, configs, packs et options. Les mondes, serveurs et captures étant
  * partagés entre toutes les instances, ils ne sont pas copiés. Le clone ne reçoit plus les
@@ -287,32 +366,7 @@ const CLONE_SKIP = new Set(['saves', 'screenshots', 'logs', 'crash-reports', 'do
  * @returns {Promise<object>} Instance créée
  */
 export async function cloneOfficialInstance(official, name, gamePath) {
-    let source = instanceFolder(gamePath, official);
-    let target = instanceFolder(gamePath, { name });
-    if (fs.existsSync(target)) throw new Error(`Un dossier "${name}" existe déjà dans les instances.`);
-
-    try {
-        fs.mkdirSync(target, { recursive: true });
-        // Entrées de premier niveau triées ici (et non dans le filtre de cp, qui reçoit des chemins
-        // « \\?\C:\... » sous Windows). Jamais de lien : les dossiers partagés restent intacts.
-        let entries = fs.existsSync(source) ? fs.readdirSync(source, { withFileTypes: true }) : [];
-        for (let entry of entries) {
-            if (CLONE_SKIP.has(entry.name) || entry.isSymbolicLink()) continue;
-            await fs.promises.cp(path.join(source, entry.name), path.join(target, entry.name), {
-                recursive: true,
-                filter: src => {
-                    try { return !fs.lstatSync(src).isSymbolicLink(); } catch { return false; }
-                }
-            });
-        }
-        // Cache de lancement : le clone est jouable hors-ligne immédiatement.
-        let cache = launchCacheFile(gamePath, official);
-        if (fs.existsSync(cache)) fs.copyFileSync(cache, launchCacheFile(gamePath, { name }));
-    } catch (err) {
-        fs.rmSync(target, { recursive: true, force: true });
-        throw new Error(`Copie des fichiers impossible (le jeu est-il ouvert ?) : ${err.message}`);
-    }
-
+    await copyInstanceFiles(official, name, gamePath);
     let list = await getLocalInstances();
     let instance = {
         name,
@@ -337,6 +391,68 @@ export async function cloneOfficialInstance(official, name, gamePath) {
     list.push(instance);
     await saveLocalInstances(list);
     return { ...instance, local: true };
+}
+
+/* ------------------------------------------------------------------ */
+/* Temps de jeu                                                        */
+/* ------------------------------------------------------------------ */
+
+let statsCache = null;
+
+/** Fichier des statistiques de jeu (toutes instances, officielles comprises). */
+async function statsFile() {
+    return path.join(await ipcRenderer.invoke('path-user-data'), 'instance-stats.json');
+}
+
+/**
+ * Statistiques de jeu par instance : { [nom]: { playTime: secondes, lastPlayed: ms } }.
+ * @returns {Promise<object>}
+ */
+export async function getPlayStats() {
+    if (!statsCache) {
+        try { statsCache = JSON.parse(fs.readFileSync(await statsFile(), 'utf8')); } catch { statsCache = {}; }
+    }
+    return statsCache;
+}
+
+/**
+ * Ajoute une session de jeu.
+ * @param {string} name Instance
+ * @param {number} seconds Durée de la session
+ */
+export async function recordPlaySession(name, seconds) {
+    let stats = await getPlayStats();
+    let entry = stats[name] || { playTime: 0 };
+    stats[name] = { playTime: entry.playTime + Math.max(0, Math.round(seconds)), lastPlayed: Date.now() };
+    await writePlayStats(stats);
+}
+
+/** Le temps de jeu suit l'instance quand elle est renommée. */
+async function renamePlayStats(from, to) {
+    let stats = await getPlayStats();
+    if (!stats[from]) return;
+    stats[to] = stats[from];
+    delete stats[from];
+    await writePlayStats(stats);
+}
+
+async function writePlayStats(stats) {
+    let file = await statsFile();
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(stats));
+    fs.renameSync(`${file}.tmp`, file);
+}
+
+/**
+ * Temps de jeu lisible (« 12 h 30 », « 45 min »), null si jamais joué.
+ * @param {number} seconds
+ */
+export function formatPlayTime(seconds) {
+    if (!seconds) return null;
+    let minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${Math.max(1, minutes)} min`;
+    let hours = Math.floor(minutes / 60);
+    let rest = minutes % 60;
+    return rest && hours < 10 ? `${hours} h ${String(rest).padStart(2, '0')}` : `${hours} h`;
 }
 
 /* ------------------------------------------------------------------ */

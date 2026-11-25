@@ -24,7 +24,7 @@ const TRUSTED_HOSTS = ['cdn.modrinth.com', 'github.com', 'raw.githubusercontent.
 /** Entrées d'instance jamais proposées à l'export (données locales, partagées ou générées). */
 const EXPORT_HIDDEN = new Set([
     'saves', 'screenshots', 'logs', 'crash-reports', 'downloads', '.fabric', '.quilt', '.mixin.out', '.cache',
-    '.venstone-shared', 'servers.dat', 'servers.dat_old', 'servers.dat.avant-partage',
+    '.venstone-shared', '.venstone-modpack.json', 'servers.dat', 'servers.dat_old', 'servers.dat.avant-partage',
     'usercache.json', 'usernamecache.json', 'command_history.txt', 'realms_persistence.json'
 ]);
 
@@ -372,14 +372,51 @@ async function downloadFile(f, target) {
     throw new Error(`${path.basename(f.path)} : ${lastError?.message || 'téléchargement impossible'}`);
 }
 
+/** Liste des fichiers installés par le modpack, gardée dans l'instance pour ses mises à jour. */
+const MANIFEST = '.venstone-modpack.json';
+
+/** Fichiers propres au joueur : jamais écrasés par une mise à jour du modpack. */
+const PRESERVED = new Set(['options.txt', 'optionsof.txt', 'optionsshaders.txt', 'servers.dat']);
+
+/** Chemins (relatifs à l'instance) que le pack installe. */
+function packPaths(pack) {
+    let overrides = pack.entries
+        .filter(e => !e.dir && /^(client-)?overrides\//.test(e.name))
+        .map(e => e.name.replace(/^(client-)?overrides\//, ''));
+    return [...new Set([...pack.downloads.map(f => f.path.split('\\').join('/')), ...overrides])];
+}
+
+/** Fichiers installés par la version précédente du modpack (null si inconnue). */
+function readManifest(dir) {
+    try {
+        let data = JSON.parse(fs.readFileSync(path.join(dir, MANIFEST), 'utf8'));
+        return Array.isArray(data.files) ? data.files : null;
+    } catch {
+        return null;
+    }
+}
+
+/** sha1 d'un fichier existant (null s'il n'existe pas). */
+async function fileSha1(file) {
+    try {
+        return crypto.createHash('sha1').update(await fs.promises.readFile(file)).digest('hex');
+    } catch {
+        return null;
+    }
+}
+
 /**
  * Installe le contenu d'un pack (lu par `readModpack`) dans le dossier d'une instance :
  * téléchargements puis overrides/ et client-overrides/ (prioritaires).
+ *  - Un fichier déjà présent avec le bon sha1 n'est pas retéléchargé.
+ *  - Un mod que le joueur a désactivé (.disabled) le reste.
+ *  - Mise à jour (`update`) : les réglages personnels (options.txt...) sont conservés.
  * @param {object} pack
  * @param {string} dir Dossier de l'instance (créé)
  * @param {(text: string) => void} [onProgress]
+ * @param {{update?: boolean}} [options]
  */
-export async function installModpack(pack, dir, onProgress = () => { }) {
+export async function installModpack(pack, dir, onProgress = () => { }, { update = false } = {}) {
     await fs.promises.mkdir(dir, { recursive: true });
 
     let done = 0;
@@ -388,7 +425,8 @@ export async function installModpack(pack, dir, onProgress = () => { }) {
     await parallel(pack.downloads, 6, async f => {
         let target = safeJoin(dir, f.path);
         if (!target) throw new Error(`Chemin refusé dans le modpack : ${f.path}`);
-        await downloadFile(f, target);
+        if (fs.existsSync(`${target}.disabled`)) target = `${target}.disabled`;
+        if (await fileSha1(target) !== String(f.hashes.sha1).toLowerCase()) await downloadFile(f, target);
         onProgress(`Téléchargement des fichiers... ${++done}/${total}`);
     });
 
@@ -399,9 +437,37 @@ export async function installModpack(pack, dir, onProgress = () => { }) {
         onProgress(`Copie des fichiers du modpack... ${i + 1}/${list.length}`);
         let rel = entry.name.replace(/^(client-)?overrides\//, '');
         let target = safeJoin(dir, rel);
-        if (!target) continue;
+        if (!target || (update && PRESERVED.has(rel) && fs.existsSync(target))) continue;
         let data = await readZipEntry(pack.file, entry);
         await fs.promises.mkdir(path.dirname(target), { recursive: true });
         await fs.promises.writeFile(target, data);
     }
+    await fs.promises.writeFile(path.join(dir, MANIFEST), JSON.stringify({ files: packPaths(pack) }));
+}
+
+/**
+ * Met à jour le contenu d'une instance vers une nouvelle version du modpack : les fichiers que
+ * l'ancienne version installait et que la nouvelle n'a plus sont supprimés (actifs ou
+ * désactivés), ce que le joueur a ajouté lui-même est conservé.
+ * @param {object} pack Nouvelle version (lue par `readModpack`)
+ * @param {string} dir Dossier de l'instance
+ * @param {(text: string) => void} [onProgress]
+ * @returns {Promise<{removed: number}>}
+ */
+export async function updateModpack(pack, dir, onProgress = () => { }) {
+    let next = new Set(packPaths(pack));
+    let removed = 0;
+    for (let rel of readManifest(dir) || []) {
+        if (next.has(rel) || PRESERVED.has(rel)) continue;
+        let target = safeJoin(dir, rel);
+        if (!target) continue;
+        for (let file of [target, `${target}.disabled`]) {
+            if (fs.existsSync(file)) {
+                await fs.promises.rm(file, { force: true });
+                removed++;
+            }
+        }
+    }
+    await installModpack(pack, dir, onProgress, { update: true });
+    return { removed };
 }

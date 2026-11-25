@@ -1,23 +1,52 @@
 <div class="container">
-    <div class="login-home login-tabs">
-        <div class="login-text">Veuillez vous identifier afin de jouer.</div>
-
+    <!-- Choix du type de compte -->
+    <div class="login-choice login-tabs">
+        <div class="login-text">Bienvenue !</div>
+        <div class="login-text-desc">Avec quel compte voulez-vous jouer ?</div>
+        <div class="login-cards">
+            <div class="login-card" data-type="venstone">
+                <div class="login-card-icon"><img src="assets/images/icon.png"/></div>
+                <div class="login-card-body">
+                    <div class="login-card-title">Compte Venstone</div>
+                    <div class="login-card-desc">Un compte propre à Venstone, pour jouer uniquement sur nos serveurs.</div>
+                </div>
+            </div>
+            <div class="login-card" data-type="microsoft">
+                <div class="login-card-icon"><img src="assets/images/logo/microsoft.svg"/></div>
+                <div class="login-card-body">
+                    <div class="login-card-title">Compte Microsoft</div>
+                    <div class="login-card-desc">Votre compte Minecraft officiel, utilisable sur tous les serveurs.</div>
+                </div>
+            </div>
+        </div>
         <div class="login-options">
-            <button class="connect connect-home">Connexion</button>
-            <button class="cancel cancel-home"  style="display: none;">annuler</button>
+            <button class="cancel login-cancel">Annuler</button>
         </div>
     </div>
 
+    <!-- Compte Venstone : pseudo -->
     <div class="login-offline login-tabs">
-        <div class="login-text">Bienvenue !</div>
+        <div class="login-text">Compte Venstone</div>
         <div class="login-text-desc">Entrez ci-dessous votre nom d'utilisateur.</div>
         <div class="input-login">
-            <input type="text" class="email email-offline" placeholder="Pseudo" />
+            <input type="text" class="email email-offline" placeholder="Pseudo" maxlength="16" spellcheck="false"/>
         </div>
-
+        <div class="login-error"></div>
         <div class="login-options">
+            <button class="cancel login-back">Retour</button>
             <button class="connect connect-offline">Connexion</button>
-            <button class="cancel cancel-offline" style="display: none;">annuler</button>
+        </div>
+    </div>
+
+    <!-- Compte Microsoft : attente de la connexion dans le navigateur -->
+    <div class="login-microsoft login-tabs">
+        <div class="login-wait"><span class="login-spinner"></span></div>
+        <div class="login-text">Compte Microsoft</div>
+        <div class="login-text-desc login-microsoft-desc">Connectez-vous dans la page qui vient de s'ouvrir dans votre navigateur. Le launcher continuera tout seul.</div>
+        <div class="login-error"></div>
+        <div class="login-options">
+            <button class="cancel login-microsoft-cancel">Annuler</button>
+            <button class="connect login-microsoft-retry">Rouvrir la page</button>
         </div>
     </div>
 
@@ -31,7 +60,6 @@
 
         <div class="login-options">
             <button class="connect connect-AZauth">Connexion</button>
-            <button class="cancel cancel-AZauth" style="display: none;">annuler</button>
         </div>
     </div>
 
