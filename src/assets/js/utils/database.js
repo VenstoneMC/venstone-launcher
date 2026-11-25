@@ -30,7 +30,8 @@ let readyTables = new Map();
 function connection() {
     if (!connectionPromise) {
         connectionPromise = ipcRenderer.invoke('path-user-data').then(userData => new Promise((resolve, reject) => {
-            let dir = path.resolve(`${userData}${dev ? '../..' : '/databases'}`);
+            // Pas <userData>/databases : Chromium efface ce dossier (ancien WebSQL), voir app.js.
+            let dir = path.resolve(`${userData}${dev ? '../..' : '/launcher-db'}`);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
             let db = new sqlite3.Database(path.join(dir, `Databases.${dev ? 'sqlite' : 'db'}`), err => {
                 if (err) return reject(err);
