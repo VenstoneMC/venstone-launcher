@@ -93,6 +93,10 @@ class Index {
                     icon: "./app/assets/images/icon.icns",
                     category: "public.app-category.games",
                     identity: null,
+                    // Build universel : sqlite3 garde ses binaires x64 et arm64 côte à côte
+                    // (un dossier par architecture, choisi à l'exécution), identiques dans les
+                    // deux builds fusionnés. Sans cette règle, @electron/universal refuse la fusion.
+                    x64ArchFiles: "Contents/Resources/app.asar.unpacked/node_modules/sqlite3/lib/binding/**",
                     target: [{
                         target: "dmg",
                         arch: "universal"
@@ -114,6 +118,8 @@ class Index {
             console.log('Le build est terminé')
         }).catch(err => {
             console.error('Error during build!', err)
+            // Sans code d'erreur, le job GitHub Actions passait au vert sans installateur.
+            process.exitCode = 1
         })
     }
 
