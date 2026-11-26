@@ -91,6 +91,21 @@ async function tokenRequest(params) {
     return data;
 }
 
+/**
+ * minecraft-java-core ne vérifie pas le statut des réponses : un refus de
+ * login_with_xbox (application Azure pas encore validée par Mojang, réponse 403
+ * « Invalid app registration ») passait inaperçu et finissait en « jeu non possédé ».
+ */
+class MinecraftAuth extends Microsoft {
+    async fetchJSON(url, options) {
+        let data = await super.fetchJSON(url, options);
+        if (url.endsWith('/authentication/login_with_xbox') && data && !data.access_token && !data.error) {
+            data.error = data.errorMessage || 'login_with_xbox';
+        }
+        return data;
+    }
+}
+
 /** Codes XErr de Xbox Live (comptes sans profil Xbox, mineurs...). */
 const XERR = {
     2148916233: 'noXbox',
@@ -108,12 +123,15 @@ const XERR = {
 async function account(clientId, oauth2) {
     let acc;
     try {
-        acc = await new Microsoft(clientId).getAccount(oauth2);
+        acc = await new MinecraftAuth(clientId).getAccount(oauth2);
     } catch {
         throw new AuthError('unreachable'); // réponse illisible (service en panne)
     }
     if (acc?.error) {
         if (acc.XErr && XERR[acc.XErr]) throw new AuthError(XERR[acc.XErr]);
+        if (acc.errorType === 'mcLogin' && /Invalid app registration|AppRegInfo/i.test(String(acc.errorMessage || acc.error))) {
+            throw new AuthError('config');
+        }
         if (acc.errorType === 'game') throw new AuthError('noGame');
         if (/fetch|network|ENOTFOUND|ECONN|timeout/i.test(String(acc.error))) throw new AuthError('unreachable');
         throw new AuthError('service', String(acc.errorMessage || acc.error));
